@@ -61,14 +61,20 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-l
 For first-block competition, use the prebuilt route:
 
 ```bash
-npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending wait --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending replace --replacement-gas-price-multiplier-bps 15000 --gas-price-gwei-fixed 4.5 --deadline-seconds 45 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --broadcast-prewarm-ms 3000 --send --auto-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
 
-With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack, Ankr standard BSC RPC, and public BSC RPC. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
+With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack, Ankr standard BSC RPC, and public BSC RPC. Broadcast returns as soon as the first provider accepts the raw tx; the remaining provider results continue in the background and are written to the run log. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
 
-With `--auto-approve-exit`, the launch executor estimates the sell approval amount from the buy quote and `minOut`. After the buy confirms, it uses the actual post-buy SHARE balance as the approval amount, sends missing ERC20-to-Permit2 and Permit2-to-UniversalRouter approvals immediately, then starts the exit watcher. Approval transactions use the same gas buffer and gas price multiplier as the launch command.
+For maximum exit speed, pre-approve the target token before launch:
+
+```bash
+npm run share:approve:exit -- --send
+```
+
+The default pre-approval amount is `100 SHARE`, based on `20 USDT / 0.32 = 62.5 SHARE` plus buffer. With `--auto-approve-exit`, the launch executor can still approve after buy confirmation, but that is slower than pre-approval.
 
 With `--rpc-race`, the hot read path races Chainstack and Ankr standard BSC RPC for hook reads, exact-input quotes, Universal Router gas simulation, and gas price. Public RPC is deliberately excluded from the hot race. Wallet nonce, transaction receipt, balances, and final settlement reads remain on the normal client path.
 
@@ -81,13 +87,16 @@ With `--first-block`, the executor changes execution model:
 - It builds and signs the raw transaction before the broadcast moment.
 - It broadcasts at `launchTime + --first-block-broadcast-offset-ms`, defaulting to `-150ms`.
 - It uses fixed `--first-block-gas-limit` because pre-open gas simulation reverts on the hook.
+- It should use `--gas-price-gwei-fixed` for the speed path, so launch does not wait on a live gas price read.
+- Current wallet balance covers `4.5 gwei * 300000 gas`; using `5 gwei` needs a small BNB top-up because `300000 * 5 gwei = 0.0015 BNB`.
+- It prewarms broadcast RPCs before the broadcast moment unless `--no-broadcast-prewarm` is provided.
 - If the first-block transaction reverts and the receipt is available, it can fall back to the quote-based safe path.
 - If the first-block transaction is still pending, do not send a second buy with uncertain nonce state.
 - Pending handling is explicit:
   - `--first-block-on-pending wait`: return `FIRST_BLOCK_TX_PENDING`, keep observing.
-  - `--first-block-on-pending replace`: sign the same buy calldata with the same nonce and a higher gas price.
-  - `--first-block-on-pending cancel`: sign a zero-value self-transfer with the same nonce and a higher gas price, then stop buying.
-- Replacement gas defaults to `--replacement-gas-price-multiplier-bps 12500`, with optional fixed/floor/cap gwei overrides.
+  - `--first-block-on-pending replace`: pre-sign the same buy calldata with the same nonce and a higher gas price, then broadcast it if the original tx is pending.
+  - `--first-block-on-pending cancel`: pre-sign a zero-value self-transfer with the same nonce and a higher gas price, then broadcast it if the original tx is pending.
+- Replacement gas defaults to `--replacement-gas-price-multiplier-bps 12500`; speed mode uses `15000`, with optional fixed/floor/cap gwei overrides.
 
 Postmortem command:
 

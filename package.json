@@ -10,6 +10,7 @@
     "share:ready": "node src/execution-readiness.js --config config/share.json",
     "share:cache:warm": "node src/cache-warm.js --config config/share.json",
     "share:approve": "node src/approve-permit2.js --config config/share.json",
+    "share:approve:exit": "node src/approve-permit2.js --config config/share.json --token target --amount 100",
     "share:launch": "node src/share-launch-executor.js --config config/share.json",
     "share:postmortem": "node src/launch-postmortem.js --config config/share.json",
     "share:sell:ready": "node src/sell-readiness.js --config config/share.json",

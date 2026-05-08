@@ -90,7 +90,7 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-l
 首区块竞争模式：
 
 ```bash
-npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending wait --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending replace --replacement-gas-price-multiplier-bps 15000 --gas-price-gwei-fixed 4.5 --deadline-seconds 45 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --broadcast-prewarm-ms 3000 --send --auto-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 这个模式仍然只走正规链上执行路线：自有 burner wallet、公开 BSC RPC、PancakeSwap quote、Universal Router gas simulation、签名交易、多 RPC 广播。它不做 mempool 攻击、sandwich、节点干扰或绕过平台规则。
@@ -103,14 +103,24 @@ npm run share:launch -- --first-block --first-block-tier acceptable --first-bloc
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
 - `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
 - `--gas-price-gwei-floor / --gas-price-gwei-cap / --gas-price-gwei-fixed`：给 gas price 加绝对下限、上限或固定值，避免“当前 gas 太低，2x 仍然不够”的问题。
-- `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；默认不打印 RPC URL、私钥或 raw signed transaction。
-- `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；发送前会打印 quote 估算数量和 minOut。
+- `--gas-price-gwei-fixed 4.5`：首区块速度优先时推荐固定 gas price，跳过开盘前 gas price RPC 读取，并避免“当前 gas 太低，2x 仍不够”。当前钱包 BNB 余额只能覆盖约 `4.88 gwei * 300000 gas`，若补足 BNB 后可提高到 `5 gwei` 或更高。
+- `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；广播默认首个 RPC 接受即返回，剩余 RPC 在后台完成并写入 run log。需要旧行为时加 `--broadcast-wait-all`。
+- `--broadcast-prewarm-ms 3000`：在广播前约 3 秒对每个广播 RPC 做轻量读，预热 DNS/TLS/provider 路径。
+- `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；速度优先时应改为开盘前预授权，不等买入后再授权。
 - `--first-block`：不等 quote 成功，开盘前按目标 tier 的最高接受均价反推 `minOut`，预构建并预签名 raw transaction，在 `launchTime + --first-block-broadcast-offset-ms` 广播。默认选择最高价格上限的 tier，也就是当前 `acceptable` 档。
 - `--first-block-gas-limit 300000`：首区块路径不做开盘前 gas simulation，因为 hook 未开始时 simulation 会 revert；使用固定 gas limit。`300000 gas * 5 gwei = 0.0015 BNB`，是否超过 `1U` 取决于当时 BNB 价格。
 - `--first-block-broadcast-offset-ms -150`：默认提前 150ms 广播，争取进开盘区块；如果太早被前一区块打包，会因为 hook 未开始而 revert。
-- `--first-block-receipt-timeout-ms 12000`：首区块交易超过这个时间还没有 receipt，就进入 pending 处理。默认不回落买第二笔，避免 nonce 冲突。
-- `--first-block-on-pending wait|replace|cancel`：`wait` 只告警等待；`replace` 用同 nonce、更高 gas 重发同一笔买入；`cancel` 用同 nonce 自转账取消队列，不再买。
-- `--replacement-gas-price-multiplier-bps 12500`：replacement/cancel 默认把原 gas price 提高 25% 再广播；也支持 `--replacement-gas-price-gwei-fixed / floor / cap`。
+- `--first-block-receipt-timeout-ms 12000`：首区块交易超过这个时间还没有 receipt，就进入 pending 处理。没有 receipt 时不能用新 nonce 再发普通买入。
+- `--first-block-on-pending wait|replace|cancel`：`wait` 只告警等待；`replace` 用同 nonce、更高 gas 重发同一笔买入；`cancel` 用同 nonce 自转账取消队列，不再买。`replace/cancel` 交易会在开盘前预签好，pending 后只广播。
+- `--replacement-gas-price-multiplier-bps 15000`：速度优先建议把 replacement/cancel 提高到原 gas price 的 1.5x；也支持 `--replacement-gas-price-gwei-fixed / floor / cap`。
+
+开盘前卖出预授权：
+
+```bash
+npm run share:approve:exit -- --send
+```
+
+该命令会给目标 token 预授权 `100 SHARE`。当前估算 `20 USDT / 0.32 = 62.5 SHARE`，`100 SHARE` 留有 buffer。它是真实链上授权交易，只在明确要执行时加 `--send`。
 
 复盘最新一次运行：
 

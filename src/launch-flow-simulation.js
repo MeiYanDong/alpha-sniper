@@ -132,6 +132,15 @@ const scenarios = [
     expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true, writeCalls: 0, broadcastCalls: 1 }
   },
   {
+    id: "S17B",
+    name: "多 RPC 广播首个成功即返回，但所有 provider 都会收到同一 raw tx",
+    multiRpcBroadcast: true,
+    broadcastLabels: "configured-1,configured-2",
+    rpcUrls: ["mock://one", "mock://two"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true, writeCalls: 0, broadcastCalls: 2 }
+  },
+  {
     id: "S18",
     name: "首区块模式预签名并临界广播，不等 quote 成功",
     firstBlock: true,
@@ -256,6 +265,7 @@ function createArrayLogger() {
 function scenarioConfig(config, scenario, launchAt) {
   return {
     ...config,
+    rpcUrls: scenario.rpcUrls || config.rpcUrls,
     launchTime: new Date(launchAt).toISOString(),
     configPath: `${config.configPath || "config/share.json"}#${scenario.id}`
   };
@@ -397,7 +407,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
     argv.push("--fast-launch", "--sprint-ms", "600", "--sprint-poll-ms", "50", "--quote-probe-lead-ms", "600");
   }
   if (scenario.multiRpcBroadcast) {
-    argv.push("--multi-rpc-broadcast", "--broadcast-public", "--broadcast-labels", "public-bsc");
+    argv.push("--multi-rpc-broadcast", "--broadcast-public", "--broadcast-labels", scenario.broadcastLabels || "public-bsc");
   }
   if (scenario.firstBlock) {
     argv.push(
@@ -408,7 +418,8 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
       "--first-block-broadcast-offset-ms",
       "0",
       "--first-block-receipt-timeout-ms",
-      "5"
+      "5",
+      "--no-broadcast-prewarm"
     );
     if (scenario.firstBlockOnPending) {
       argv.push("--first-block-on-pending", scenario.firstBlockOnPending);

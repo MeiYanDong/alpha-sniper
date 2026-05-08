@@ -721,55 +721,155 @@ async function waitForTransactionReceiptWithTimeout({ client, hash, timeoutMs, s
   ]);
 }
 
+function summarizeBroadcastResults(results) {
+  return results.map((result) =>
+    result.ok
+      ? { label: result.label, ok: true, hash: result.hash }
+      : { label: result.label, ok: false, errorType: result.errorType }
+  );
+}
+
+function buildBroadcastFailureError(results) {
+  return new Error(
+    `Raw transaction broadcast failed: ${results
+      .map((result) => `${result.label}:${result.errorType || "unknown"}`)
+      .join(", ")}`
+  );
+}
+
 async function broadcastPreparedRawTransaction({
   providers,
   serializedTransaction,
   timeoutMs,
   logger,
   eventName = "multi_rpc_broadcast",
-  broadcastRawTransactionFn = broadcastRawTransaction
+  broadcastRawTransactionFn = broadcastRawTransaction,
+  waitAll = false
 }) {
+  const startedAt = performance.now();
+  const tasks = providers.map(async (provider) => {
+    try {
+      const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
+      return { ok: true, label: provider.label, hash };
+    } catch (error) {
+      return {
+        ok: false,
+        label: provider.label,
+        errorType: classifyRpcError(error),
+        message: error.shortMessage || error.message || String(error)
+      };
+    }
+  });
+
+  if (waitAll) {
+    const results = await Promise.all(tasks);
+    const success = results.find((result) => result.ok);
+    logger.event(eventName, {
+      latencyMs: Math.round(performance.now() - startedAt),
+      okCount: results.filter((result) => result.ok).length,
+      providerCount: providers.length,
+      winner: success?.label || null,
+      providers: summarizeBroadcastResults(results)
+    });
+
+    if (!success) throw buildBroadcastFailureError(results);
+
+    return {
+      hash: success.hash,
+      okCount: results.filter((result) => result.ok).length,
+      providerCount: results.length,
+      winnerLabel: success.label,
+      results
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const results = [];
+    let remaining = tasks.length;
+    let settled = false;
+
+    for (const task of tasks) {
+      task.then((result) => {
+        results.push(result);
+        remaining -= 1;
+
+        if (!settled && result.ok) {
+          settled = true;
+          logger.event(`${eventName}_first_success`, {
+            latencyMs: Math.round(performance.now() - startedAt),
+            winner: result.label,
+            hash: result.hash,
+            okCount: 1,
+            providerCount: providers.length
+          });
+          resolve({
+            hash: result.hash,
+            okCount: 1,
+            providerCount: providers.length,
+            winnerLabel: result.label,
+            results: [result],
+            firstSuccess: true
+          });
+        }
+
+        if (remaining === 0) {
+          const success = results.find((item) => item.ok);
+          logger.event(eventName, {
+            latencyMs: Math.round(performance.now() - startedAt),
+            okCount: results.filter((item) => item.ok).length,
+            providerCount: providers.length,
+            winner: success?.label || null,
+            providers: summarizeBroadcastResults(results)
+          });
+          if (!settled) {
+            if (success) {
+              settled = true;
+              resolve({
+                hash: success.hash,
+                okCount: results.filter((item) => item.ok).length,
+                providerCount: providers.length,
+                winnerLabel: success.label,
+                results
+              });
+            } else {
+              settled = true;
+              reject(buildBroadcastFailureError(results));
+            }
+          }
+        }
+      });
+    }
+  });
+}
+
+async function prewarmBroadcastProviders({ providers, timeoutMs, logger, eventName = "broadcast_prewarm" }) {
   const startedAt = performance.now();
   const results = await Promise.all(
     providers.map(async (provider) => {
       try {
-        const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
-        return { ok: true, label: provider.label, hash };
+        const blockNumber = await rawRpcCall(provider.url, "eth_blockNumber", [], { timeoutMs });
+        return { ok: true, label: provider.label, blockNumber };
       } catch (error) {
         return {
           ok: false,
           label: provider.label,
           errorType: classifyRpcError(error),
-          message: error.shortMessage || error.message || String(error)
+          message: shortErrorMessage(error)
         };
       }
     })
   );
-  const success = results.find((result) => result.ok);
   logger.event(eventName, {
     latencyMs: Math.round(performance.now() - startedAt),
+    okCount: results.filter((result) => result.ok).length,
+    providerCount: providers.length,
     providers: results.map((result) =>
       result.ok
-        ? { label: result.label, ok: true, hash: result.hash }
+        ? { label: result.label, ok: true, blockNumber: result.blockNumber }
         : { label: result.label, ok: false, errorType: result.errorType }
     )
   });
-
-  if (!success) {
-    throw new Error(
-      `Raw transaction broadcast failed: ${results
-        .map((result) => `${result.label}:${result.errorType || "unknown"}`)
-        .join(", ")}`
-    );
-  }
-
-  return {
-    hash: success.hash,
-    okCount: results.filter((result) => result.ok).length,
-    providerCount: results.length,
-    winnerLabel: success.label,
-    results
-  };
+  return results;
 }
 
 async function sendBuyTransaction({
@@ -815,7 +915,8 @@ async function sendBuyTransaction({
     serializedTransaction,
     timeoutMs,
     logger,
-    broadcastRawTransactionFn
+    broadcastRawTransactionFn,
+    waitAll: hasFlag("--broadcast-wait-all", argv)
   });
 
   console.log(`Buy tx broadcast: ${broadcast.hash} via ${broadcast.winnerLabel}, ok=${broadcast.okCount}/${broadcast.providerCount}`);
@@ -1090,6 +1191,85 @@ async function runFirstBlockPrebroadcast({
     broadcastAt: new Date(broadcastAt).toISOString()
   });
 
+  let replacementPrepared = null;
+  if (onPending === "replace") {
+    const replacementGasPrice = resolveReplacementGasPrice({
+      originalGasPrice: gasPriceInfo.gasPrice,
+      argv
+    });
+    const { serializedTransaction: replacementSerializedTransaction } = await signRawBuyTransaction({
+      config,
+      account,
+      client,
+      tx: { ...tx, nonce },
+      gas,
+      gasPrice: replacementGasPrice.gasPrice
+    });
+    replacementPrepared = {
+      serializedTransaction: replacementSerializedTransaction,
+      gasPrice: replacementGasPrice
+    };
+    logger.event("first_block_replacement_presigned", {
+      nonce,
+      gas,
+      originalGasPrice: gasPriceInfo.gasPrice,
+      replacementGasPrice: replacementGasPrice.gasPrice,
+      replacementBumpBps: replacementGasPrice.bumpBps,
+      replacementGasPriceFloor: replacementGasPrice.gasPriceFloor,
+      replacementGasPriceCap: replacementGasPrice.gasPriceCap,
+      replacementGasPriceFixed: replacementGasPrice.gasPriceFixed
+    });
+  }
+
+  let cancelPrepared = null;
+  if (onPending === "cancel") {
+    const cancelGasPrice = resolveReplacementGasPrice({
+      originalGasPrice: gasPriceInfo.gasPrice,
+      argv
+    });
+    const cancelGas = BigInt(argValueFrom(argv, "--cancel-gas-limit", "21000"));
+    const { serializedTransaction: cancelSerializedTransaction } = await signCancelTransaction({
+      config,
+      account,
+      nonce,
+      gas: cancelGas,
+      gasPrice: cancelGasPrice.gasPrice
+    });
+    cancelPrepared = {
+      serializedTransaction: cancelSerializedTransaction,
+      gas: cancelGas,
+      gasPrice: cancelGasPrice
+    };
+    logger.event("first_block_cancel_presigned", {
+      nonce,
+      gas: cancelGas,
+      originalGasPrice: gasPriceInfo.gasPrice,
+      cancelGasPrice: cancelGasPrice.gasPrice
+    });
+  }
+
+  if (!hasFlag("--no-broadcast-prewarm", argv)) {
+    const prewarmLeadMs = Number(argValueFrom(argv, "--broadcast-prewarm-ms", "3000"));
+    const prewarmTimeoutMs = Number(argValueFrom(argv, "--broadcast-prewarm-timeout-ms", "1000"));
+    const latestSafePrewarmStart = broadcastAt - prewarmTimeoutMs - 100;
+    if (nowFn() < latestSafePrewarmStart) {
+      await waitUntil({ targetMs: broadcastAt - prewarmLeadMs, nowFn, sleepFn });
+      await prewarmBroadcastProviders({
+        providers,
+        timeoutMs: prewarmTimeoutMs,
+        logger,
+        eventName: "first_block_broadcast_prewarm"
+      });
+    } else {
+      logger.event("first_block_broadcast_prewarm_skipped", {
+        reason: "TOO_CLOSE_TO_BROADCAST",
+        broadcastAt: new Date(broadcastAt).toISOString(),
+        now: new Date(nowFn()).toISOString(),
+        prewarmTimeoutMs
+      });
+    }
+  }
+
   await waitUntil({ targetMs: broadcastAt, nowFn, sleepFn });
   const sentAt = nowFn();
   const broadcast = await broadcastPreparedRawTransaction({
@@ -1098,7 +1278,8 @@ async function runFirstBlockPrebroadcast({
     timeoutMs,
     logger,
     eventName: "first_block_broadcast",
-    broadcastRawTransactionFn
+    broadcastRawTransactionFn,
+    waitAll: hasFlag("--broadcast-wait-all", argv)
   });
   console.log(
     `First-block tx broadcast: ${broadcast.hash} via ${broadcast.winnerLabel}, ok=${broadcast.okCount}/${broadcast.providerCount}`
@@ -1126,38 +1307,18 @@ async function runFirstBlockPrebroadcast({
     });
 
     if (onPending === "replace") {
-      const replacementGasPrice = resolveReplacementGasPrice({
-        originalGasPrice: gasPriceInfo.gasPrice,
-        argv
-      });
-      const { serializedTransaction: replacementSerializedTransaction } = await signRawBuyTransaction({
-        config,
-        account,
-        client,
-        tx: { ...tx, nonce },
-        gas,
-        gasPrice: replacementGasPrice.gasPrice
-      });
-      logger.event("first_block_replacement_presigned", {
-        nonce,
-        gas,
-        originalGasPrice: gasPriceInfo.gasPrice,
-        replacementGasPrice: replacementGasPrice.gasPrice,
-        replacementBumpBps: replacementGasPrice.bumpBps,
-        replacementGasPriceFloor: replacementGasPrice.gasPriceFloor,
-        replacementGasPriceCap: replacementGasPrice.gasPriceCap,
-        replacementGasPriceFixed: replacementGasPrice.gasPriceFixed
-      });
+      if (!replacementPrepared) throw new Error("Replacement transaction was not pre-signed");
       const replacementSentAt = nowFn();
       let replacementBroadcast;
       try {
         replacementBroadcast = await broadcastPreparedRawTransaction({
           providers,
-          serializedTransaction: replacementSerializedTransaction,
+          serializedTransaction: replacementPrepared.serializedTransaction,
           timeoutMs,
           logger,
           eventName: "first_block_replacement_broadcast",
-          broadcastRawTransactionFn
+          broadcastRawTransactionFn,
+          waitAll: hasFlag("--broadcast-wait-all", argv)
         });
       } catch (error) {
         logger.event("first_block_replacement_broadcast_failed", {
@@ -1260,7 +1421,7 @@ async function runFirstBlockPrebroadcast({
         getTokenMetaFn,
         quoteFn,
         gasBufferBps,
-        gasPriceMultiplierBps: replacementGasPrice.bumpBps
+        gasPriceMultiplierBps: replacementPrepared.gasPrice.bumpBps
       });
 
       return {
@@ -1279,34 +1440,18 @@ async function runFirstBlockPrebroadcast({
     }
 
     if (onPending === "cancel") {
-      const cancelGasPrice = resolveReplacementGasPrice({
-        originalGasPrice: gasPriceInfo.gasPrice,
-        argv
-      });
-      const cancelGas = BigInt(argValueFrom(argv, "--cancel-gas-limit", "21000"));
-      const { serializedTransaction: cancelSerializedTransaction } = await signCancelTransaction({
-        config,
-        account,
-        nonce,
-        gas: cancelGas,
-        gasPrice: cancelGasPrice.gasPrice
-      });
-      logger.event("first_block_cancel_presigned", {
-        nonce,
-        gas: cancelGas,
-        originalGasPrice: gasPriceInfo.gasPrice,
-        cancelGasPrice: cancelGasPrice.gasPrice
-      });
+      if (!cancelPrepared) throw new Error("Cancel transaction was not pre-signed");
       const cancelSentAt = nowFn();
       let cancelBroadcast;
       try {
         cancelBroadcast = await broadcastPreparedRawTransaction({
           providers,
-          serializedTransaction: cancelSerializedTransaction,
+          serializedTransaction: cancelPrepared.serializedTransaction,
           timeoutMs,
           logger,
           eventName: "first_block_cancel_broadcast",
-          broadcastRawTransactionFn
+          broadcastRawTransactionFn,
+          waitAll: hasFlag("--broadcast-wait-all", argv)
         });
       } catch (error) {
         logger.event("first_block_cancel_broadcast_failed", {
