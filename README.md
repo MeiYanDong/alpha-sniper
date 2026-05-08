@@ -81,7 +81,7 @@ npm run share:launch -- --send --auto-exit --auto-approve-exit
 极速开盘模式：
 
 ```bash
-npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 15000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 这个模式仍然只走正规链上执行路线：自有 burner wallet、公开 BSC RPC、PancakeSwap quote、Universal Router gas simulation、签名交易、多 RPC 广播。它不做 mempool 攻击、sandwich、节点干扰或绕过平台规则。
@@ -91,7 +91,7 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-
 - `--fast-launch`：hook 轮询和买入 quote 探测并行。
 - `--quote-probe-lead-ms 10000`：开盘前最后 10 秒开始直接探测 quote，quote 成功且价格匹配就进入买入路径，不只等 hook poll。
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
-- `--gas-price-multiplier-bps 15000`：买入 gas price 使用 1.5x；普通模式仍默认 1.2x。
+- `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
 - `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack 和公开 BSC RPC；默认不打印 RPC URL、私钥或 raw signed transaction。
 
 通用真实买/卖测试走同一个 Infinity Universal Router 路径：

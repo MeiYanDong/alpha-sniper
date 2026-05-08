@@ -54,7 +54,7 @@ There is no "up to" sizing. The program can only buy exact `20 USDT`, exact `10 
 The active prewarm command now uses the speed-first route:
 
 ```bash
-npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 15000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.

@@ -747,7 +747,7 @@ export async function runLaunchExecutor({
 
   const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
   const gasPriceMultiplierBps = BigInt(
-    argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "15000" : "12000")
+    argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "20000" : "12000")
   );
   const [gas, gasPrice, beforeTarget, beforeQuote] = await Promise.all([
     client.estimateContractGas({
