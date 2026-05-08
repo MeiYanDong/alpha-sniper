@@ -648,7 +648,7 @@ async function signRawBuyTransaction({ config, account, client, tx, gas, gasPric
     throw new Error("Raw transaction broadcast requires a local account that can sign transactions");
   }
 
-  const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
+  const nonce = tx.nonce ?? (await client.getTransactionCount({ address: account.address, blockTag: "pending" }));
   const serializedTransaction = await account.signTransaction({
     chainId: Number(config.chainId || bsc.id),
     nonce,
@@ -661,6 +661,64 @@ async function signRawBuyTransaction({ config, account, client, tx, gas, gasPric
   });
 
   return { serializedTransaction, nonce };
+}
+
+function resolveReplacementGasPrice({ originalGasPrice, argv }) {
+  const fixed = parseGweiArg(argv, "--replacement-gas-price-gwei-fixed");
+  const floor = parseGweiArg(argv, "--replacement-gas-price-gwei-floor");
+  const cap = parseGweiArg(argv, "--replacement-gas-price-gwei-cap") ?? parseGweiArg(argv, "--gas-price-gwei-cap");
+  const bumpBps = BigInt(argValueFrom(argv, "--replacement-gas-price-multiplier-bps", "12500"));
+
+  let gasPrice = fixed ?? ((originalGasPrice * bumpBps) / 10_000n + 1n);
+  if (floor !== null) gasPrice = maxBigInt(gasPrice, floor);
+  if (cap !== null) gasPrice = minBigInt(gasPrice, cap);
+  if (gasPrice <= originalGasPrice) {
+    throw new Error("Replacement gas price must be greater than original gas price");
+  }
+
+  return {
+    gasPrice,
+    bumpBps,
+    gasPriceFloor: floor,
+    gasPriceCap: cap,
+    gasPriceFixed: fixed
+  };
+}
+
+function resolveFirstBlockOnPending(argv) {
+  const action = argValueFrom(argv, "--first-block-on-pending", "wait");
+  if (!["wait", "replace", "cancel"].includes(action)) {
+    throw new Error(`Invalid --first-block-on-pending: ${action}. Use wait, replace, or cancel.`);
+  }
+  return action;
+}
+
+async function signCancelTransaction({ config, account, nonce, gas, gasPrice }) {
+  if (typeof account.signTransaction !== "function") {
+    throw new Error("Cancel transaction requires a local account that can sign transactions");
+  }
+
+  const serializedTransaction = await account.signTransaction({
+    chainId: Number(config.chainId || bsc.id),
+    nonce,
+    to: account.address,
+    gas,
+    gasPrice,
+    value: 0n,
+    type: "legacy"
+  });
+  return { serializedTransaction, nonce };
+}
+
+async function waitForTransactionReceiptWithTimeout({ client, hash, timeoutMs, sleepFn = sleep }) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return { timedOut: false, receipt: await client.waitForTransactionReceipt({ hash }) };
+  }
+
+  return Promise.race([
+    client.waitForTransactionReceipt({ hash }).then((receipt) => ({ timedOut: false, receipt })),
+    sleepFn(timeoutMs).then(() => ({ timedOut: true, receipt: null }))
+  ]);
 }
 
 async function broadcastPreparedRawTransaction({
@@ -978,6 +1036,7 @@ async function runFirstBlockPrebroadcast({
   const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
   const providers = getBroadcastProviders({ config, argv });
   const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
+  const onPending = resolveFirstBlockOnPending(argv);
 
   console.log(
     `First-block plan: BUY ${amountInUsdt} ${quoteMeta.symbol}, tier ${tier.name}, maxAvg ${maxAvgPriceUsd}, minOut ${fmtDecimal(toDecimalAmount(minOut, targetMeta.decimals), 8)} ${targetMeta.symbol}, gasLimit ${gas.toString()}, gasPrice ${gasPriceInfo.gasPrice.toString()}`
@@ -999,6 +1058,7 @@ async function runFirstBlockPrebroadcast({
     deadline,
     broadcastAt: new Date(broadcastAt).toISOString(),
     broadcastOffsetMs,
+    onPending,
     providers: providers.map((provider) => provider.label)
   });
 
@@ -1049,7 +1109,283 @@ async function runFirstBlockPrebroadcast({
     mode: "first_block_prebroadcast"
   });
 
-  const receipt = await client.waitForTransactionReceipt({ hash: broadcast.hash });
+  const receiptTimeoutMs = Number(argValueFrom(argv, "--first-block-receipt-timeout-ms", "12000"));
+  const receiptResult = await waitForTransactionReceiptWithTimeout({
+    client,
+    hash: broadcast.hash,
+    timeoutMs: receiptTimeoutMs,
+    sleepFn
+  });
+  if (receiptResult.timedOut) {
+    console.log(`First-block tx pending after ${receiptTimeoutMs}ms: ${broadcast.hash}; action=${onPending}.`);
+    logger.event("first_block_pending_timeout", {
+      hash: broadcast.hash,
+      nonce,
+      timeoutMs: receiptTimeoutMs,
+      onPending
+    });
+
+    if (onPending === "replace") {
+      const replacementGasPrice = resolveReplacementGasPrice({
+        originalGasPrice: gasPriceInfo.gasPrice,
+        argv
+      });
+      const { serializedTransaction: replacementSerializedTransaction } = await signRawBuyTransaction({
+        config,
+        account,
+        client,
+        tx: { ...tx, nonce },
+        gas,
+        gasPrice: replacementGasPrice.gasPrice
+      });
+      logger.event("first_block_replacement_presigned", {
+        nonce,
+        gas,
+        originalGasPrice: gasPriceInfo.gasPrice,
+        replacementGasPrice: replacementGasPrice.gasPrice,
+        replacementBumpBps: replacementGasPrice.bumpBps,
+        replacementGasPriceFloor: replacementGasPrice.gasPriceFloor,
+        replacementGasPriceCap: replacementGasPrice.gasPriceCap,
+        replacementGasPriceFixed: replacementGasPrice.gasPriceFixed
+      });
+      const replacementSentAt = nowFn();
+      let replacementBroadcast;
+      try {
+        replacementBroadcast = await broadcastPreparedRawTransaction({
+          providers,
+          serializedTransaction: replacementSerializedTransaction,
+          timeoutMs,
+          logger,
+          eventName: "first_block_replacement_broadcast",
+          broadcastRawTransactionFn
+        });
+      } catch (error) {
+        logger.event("first_block_replacement_broadcast_failed", {
+          replacedHash: broadcast.hash,
+          nonce,
+          message: error.shortMessage || error.message || String(error)
+        });
+        console.log(`First-block replacement broadcast failed: ${error.shortMessage || error.message || error}`);
+        return {
+          action: "WAIT",
+          reason: "FIRST_BLOCK_REPLACEMENT_BROADCAST_FAILED",
+          sent: true,
+          hash: broadcast.hash,
+          nonce
+        };
+      }
+      console.log(
+        `First-block replacement broadcast: ${replacementBroadcast.hash} via ${replacementBroadcast.winnerLabel}, ok=${replacementBroadcast.okCount}/${replacementBroadcast.providerCount}`
+      );
+      logger.event("tx_sent", {
+        hash: replacementBroadcast.hash,
+        sentAt: new Date(replacementSentAt).toISOString(),
+        mode: "first_block_replacement",
+        replacedHash: broadcast.hash
+      });
+
+      const replacementReceiptTimeoutMs = Number(
+        argValueFrom(argv, "--replacement-receipt-timeout-ms", String(receiptTimeoutMs))
+      );
+      const replacementReceiptResult = await waitForTransactionReceiptWithTimeout({
+        client,
+        hash: replacementBroadcast.hash,
+        timeoutMs: replacementReceiptTimeoutMs,
+        sleepFn
+      });
+      if (replacementReceiptResult.timedOut) {
+        logger.event("first_block_replacement_pending_timeout", {
+          hash: replacementBroadcast.hash,
+          replacedHash: broadcast.hash,
+          nonce,
+          timeoutMs: replacementReceiptTimeoutMs
+        });
+        return {
+          action: "WAIT",
+          reason: "FIRST_BLOCK_REPLACEMENT_PENDING",
+          sent: true,
+          hash: replacementBroadcast.hash,
+          replacedHash: broadcast.hash,
+          nonce
+        };
+      }
+
+      const replacementReceipt = replacementReceiptResult.receipt;
+      if (replacementReceipt.status !== "success") {
+        logger.event("first_block_replacement_failed", {
+          hash: replacementBroadcast.hash,
+          replacedHash: broadcast.hash,
+          status: replacementReceipt.status,
+          blockNumber: replacementReceipt.blockNumber,
+          gasUsed: replacementReceipt.gasUsed,
+          effectiveGasPrice: replacementReceipt.effectiveGasPrice
+        });
+        if (hasFlag("--no-first-block-fallback", argv)) {
+          return {
+            action: "SKIP",
+            reason: "FIRST_BLOCK_REPLACEMENT_FAILED",
+            sent: true,
+            hash: replacementBroadcast.hash,
+            replacedHash: broadcast.hash,
+            receiptStatus: replacementReceipt.status
+          };
+        }
+        return {
+          fallback: true,
+          reason: "FIRST_BLOCK_REPLACEMENT_FAILED",
+          hash: replacementBroadcast.hash,
+          replacedHash: broadcast.hash,
+          receiptStatus: replacementReceipt.status
+        };
+      }
+
+      const replacementFinalized = await finalizeBuyAfterReceipt({
+        config,
+        account,
+        client,
+        walletClient,
+        hash: replacementBroadcast.hash,
+        receipt: replacementReceipt,
+        sentAt: replacementSentAt,
+        beforeQuote,
+        beforeTarget,
+        quoteMeta,
+        targetMeta,
+        chosen,
+        autoExit,
+        argv,
+        logger,
+        nowFn,
+        sleepFn,
+        getTokenMetaFn,
+        quoteFn,
+        gasBufferBps,
+        gasPriceMultiplierBps: replacementGasPrice.bumpBps
+      });
+
+      return {
+        action: "BUY_EXACT_IN",
+        reason: "FIRST_BLOCK_REPLACEMENT",
+        amountInUsdt: String(amountInUsdt),
+        tier: tier.name,
+        avg: replacementFinalized.entryAvg?.toString(),
+        maxAvgPriceUsd: String(maxAvgPriceUsd),
+        sent: true,
+        hash: replacementBroadcast.hash,
+        replacedHash: broadcast.hash,
+        receiptStatus: replacementReceipt.status,
+        exitResult: replacementFinalized.exitResult
+      };
+    }
+
+    if (onPending === "cancel") {
+      const cancelGasPrice = resolveReplacementGasPrice({
+        originalGasPrice: gasPriceInfo.gasPrice,
+        argv
+      });
+      const cancelGas = BigInt(argValueFrom(argv, "--cancel-gas-limit", "21000"));
+      const { serializedTransaction: cancelSerializedTransaction } = await signCancelTransaction({
+        config,
+        account,
+        nonce,
+        gas: cancelGas,
+        gasPrice: cancelGasPrice.gasPrice
+      });
+      logger.event("first_block_cancel_presigned", {
+        nonce,
+        gas: cancelGas,
+        originalGasPrice: gasPriceInfo.gasPrice,
+        cancelGasPrice: cancelGasPrice.gasPrice
+      });
+      const cancelSentAt = nowFn();
+      let cancelBroadcast;
+      try {
+        cancelBroadcast = await broadcastPreparedRawTransaction({
+          providers,
+          serializedTransaction: cancelSerializedTransaction,
+          timeoutMs,
+          logger,
+          eventName: "first_block_cancel_broadcast",
+          broadcastRawTransactionFn
+        });
+      } catch (error) {
+        logger.event("first_block_cancel_broadcast_failed", {
+          cancelledHash: broadcast.hash,
+          nonce,
+          message: error.shortMessage || error.message || String(error)
+        });
+        console.log(`First-block cancel broadcast failed: ${error.shortMessage || error.message || error}`);
+        return {
+          action: "WAIT",
+          reason: "FIRST_BLOCK_CANCEL_BROADCAST_FAILED",
+          sent: true,
+          hash: broadcast.hash,
+          nonce
+        };
+      }
+      console.log(
+        `First-block cancel broadcast: ${cancelBroadcast.hash} via ${cancelBroadcast.winnerLabel}, ok=${cancelBroadcast.okCount}/${cancelBroadcast.providerCount}`
+      );
+      logger.event("tx_sent", {
+        hash: cancelBroadcast.hash,
+        sentAt: new Date(cancelSentAt).toISOString(),
+        mode: "first_block_cancel",
+        cancelledHash: broadcast.hash
+      });
+
+      const cancelReceiptTimeoutMs = Number(argValueFrom(argv, "--cancel-receipt-timeout-ms", String(receiptTimeoutMs)));
+      const cancelReceiptResult = await waitForTransactionReceiptWithTimeout({
+        client,
+        hash: cancelBroadcast.hash,
+        timeoutMs: cancelReceiptTimeoutMs,
+        sleepFn
+      });
+      if (cancelReceiptResult.timedOut) {
+        logger.event("first_block_cancel_pending_timeout", {
+          hash: cancelBroadcast.hash,
+          cancelledHash: broadcast.hash,
+          nonce,
+          timeoutMs: cancelReceiptTimeoutMs
+        });
+        return {
+          action: "WAIT",
+          reason: "FIRST_BLOCK_CANCEL_PENDING",
+          sent: true,
+          hash: cancelBroadcast.hash,
+          cancelledHash: broadcast.hash,
+          nonce
+        };
+      }
+
+      const cancelReceipt = cancelReceiptResult.receipt;
+      logger.event("first_block_cancel_confirmed", {
+        hash: cancelBroadcast.hash,
+        cancelledHash: broadcast.hash,
+        status: cancelReceipt.status,
+        blockNumber: cancelReceipt.blockNumber,
+        gasUsed: cancelReceipt.gasUsed,
+        effectiveGasPrice: cancelReceipt.effectiveGasPrice
+      });
+      return {
+        action: "SKIP",
+        reason: cancelReceipt.status === "success" ? "FIRST_BLOCK_CANCELLED" : "FIRST_BLOCK_CANCEL_FAILED",
+        sent: true,
+        hash: cancelBroadcast.hash,
+        cancelledHash: broadcast.hash,
+        receiptStatus: cancelReceipt.status
+      };
+    }
+
+    return {
+      action: "WAIT",
+      reason: "FIRST_BLOCK_TX_PENDING",
+      sent: true,
+      hash: broadcast.hash,
+      nonce
+    };
+  }
+
+  const receipt = receiptResult.receipt;
   if (receipt.status !== "success") {
     console.log(`First-block tx status: ${receipt.status}; ${hasFlag("--no-first-block-fallback", argv) ? "not falling back." : "falling back to quote path."}`);
     logger.event("first_block_failed", {

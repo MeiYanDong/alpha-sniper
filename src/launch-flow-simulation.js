@@ -163,6 +163,72 @@ const scenarios = [
       broadcastCalls: 1,
       quoteCalls: 2
     }
+  },
+  {
+    id: "S20",
+    name: "首区块交易 pending 超时后默认等待，不发第二笔",
+    firstBlock: true,
+    receiptBehaviors: ["pending"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "WAIT",
+      reason: "FIRST_BLOCK_TX_PENDING",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 1,
+      quoteCalls: 0
+    }
+  },
+  {
+    id: "S21",
+    name: "首区块 pending 后用同 nonce 更高 gas replacement buy",
+    firstBlock: true,
+    firstBlockOnPending: "replace",
+    receiptBehaviors: ["pending", "success"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "BUY_EXACT_IN",
+      reason: "FIRST_BLOCK_REPLACEMENT",
+      amountInUsdt: "10",
+      tier: "acceptable",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 2,
+      quoteCalls: 0
+    }
+  },
+  {
+    id: "S22",
+    name: "首区块 pending 后用同 nonce cancel 释放队列",
+    firstBlock: true,
+    firstBlockOnPending: "cancel",
+    receiptBehaviors: ["pending", "success"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "SKIP",
+      reason: "FIRST_BLOCK_CANCELLED",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 2,
+      quoteCalls: 0
+    }
+  },
+  {
+    id: "S23",
+    name: "首区块 pending 后 replacement 广播失败时等待原 nonce，不回落第二笔买入",
+    firstBlock: true,
+    firstBlockOnPending: "replace",
+    receiptBehaviors: ["pending"],
+    broadcastFailures: [false, "replacement rejected"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "WAIT",
+      reason: "FIRST_BLOCK_REPLACEMENT_BROADCAST_FAILED",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 2,
+      quoteCalls: 0
+    }
   }
 ];
 
@@ -264,11 +330,16 @@ function createMockClient({ config, scenario }) {
       return gasPrice;
     },
     async waitForTransactionReceipt({ hash }) {
-      const status = scenario.receiptStatuses?.[scenario.receiptCalls] || scenario.receiptStatus || "success";
+      const behavior =
+        scenario.receiptBehaviors?.[scenario.receiptCalls] ||
+        scenario.receiptStatuses?.[scenario.receiptCalls] ||
+        scenario.receiptStatus ||
+        "success";
       scenario.receiptCalls += 1;
+      if (behavior === "pending") return new Promise(() => {});
       return {
         hash,
-        status,
+        status: behavior,
         blockNumber: 97_000_001n,
         gasUsed: gas,
         effectiveGasPrice: gasPrice
@@ -335,8 +406,13 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
       "--broadcast-labels",
       "public-bsc",
       "--first-block-broadcast-offset-ms",
-      "0"
+      "0",
+      "--first-block-receipt-timeout-ms",
+      "5"
     );
+    if (scenario.firstBlockOnPending) {
+      argv.push("--first-block-on-pending", scenario.firstBlockOnPending);
+    }
   }
   const account = {
     address: SIM_ACCOUNT,
@@ -363,7 +439,13 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
       }),
       quoteFn: createQuoteFn(scenario),
       broadcastRawTransactionFn: async () => {
+        const failure = scenario.broadcastFailures?.[scenario.broadcastCalls];
         scenario.broadcastCalls += 1;
+        if (failure) {
+          const error = new Error(String(failure));
+          error.shortMessage = String(failure);
+          throw error;
+        }
         return `0x${scenario.id.toLowerCase().padEnd(64, "b")}`;
       }
     });
@@ -418,27 +500,24 @@ async function main() {
   for (const scenario of scenarios) {
     const result = await runActualExecutorScenario({ baseConfig, rawScenario: scenario });
     assertExpected(scenario, result);
-    if (result.action === "BUY_EXACT_IN") {
+    const expectedWriteCalls = scenario.expected.writeCalls ?? (result.action === "BUY_EXACT_IN" ? 1 : 0);
+    const expectedBroadcastCalls = scenario.expected.broadcastCalls ?? 0;
+    assert.equal(
+      result.writeCalls,
+      expectedWriteCalls,
+      `${scenario.id} should trigger expected fake writeContract calls`
+    );
+    assert.equal(
+      result.broadcastCalls,
+      expectedBroadcastCalls,
+      `${scenario.id} should trigger expected fake raw broadcasts`
+    );
+    if (scenario.expected.quoteCalls !== undefined) {
       assert.equal(
-        result.writeCalls,
-        scenario.expected.writeCalls ?? 1,
-        `${scenario.id} should trigger expected fake writeContract calls`
+        result.quoteCalls,
+        scenario.expected.quoteCalls,
+        `${scenario.id} should trigger expected quote calls`
       );
-      assert.equal(
-        result.broadcastCalls,
-        scenario.expected.broadcastCalls ?? 0,
-        `${scenario.id} should trigger expected fake raw broadcasts`
-      );
-      if (scenario.expected.quoteCalls !== undefined) {
-        assert.equal(
-          result.quoteCalls,
-          scenario.expected.quoteCalls,
-          `${scenario.id} should trigger expected quote calls`
-        );
-      }
-    } else {
-      assert.equal(result.writeCalls, 0, `${scenario.id} should not trigger fake writeContract`);
-      assert.equal(result.broadcastCalls, 0, `${scenario.id} should not trigger fake raw broadcast`);
     }
     results.push({ scenario, result });
   }

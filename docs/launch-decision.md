@@ -61,7 +61,7 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-l
 For first-block competition, use the prebuilt route:
 
 ```bash
-npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending wait --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
@@ -83,6 +83,20 @@ With `--first-block`, the executor changes execution model:
 - It uses fixed `--first-block-gas-limit` because pre-open gas simulation reverts on the hook.
 - If the first-block transaction reverts and the receipt is available, it can fall back to the quote-based safe path.
 - If the first-block transaction is still pending, do not send a second buy with uncertain nonce state.
+- Pending handling is explicit:
+  - `--first-block-on-pending wait`: return `FIRST_BLOCK_TX_PENDING`, keep observing.
+  - `--first-block-on-pending replace`: sign the same buy calldata with the same nonce and a higher gas price.
+  - `--first-block-on-pending cancel`: sign a zero-value self-transfer with the same nonce and a higher gas price, then stop buying.
+- Replacement gas defaults to `--replacement-gas-price-multiplier-bps 12500`, with optional fixed/floor/cap gwei overrides.
+
+Postmortem command:
+
+```bash
+npm run share:postmortem -- --offline
+npm run share:postmortem -- --run data/runs/具体文件.jsonl --launch-block 97068324
+```
+
+The postmortem report reads JSONL evidence first. Online mode then checks receipt, tx index, launch block timestamp, and candidate router/token transactions in the launch block.
 
 Gas note:
 

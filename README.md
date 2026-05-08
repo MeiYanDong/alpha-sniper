@@ -90,7 +90,7 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-l
 首区块竞争模式：
 
 ```bash
-npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --first-block-receipt-timeout-ms 12000 --first-block-on-pending wait --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 这个模式仍然只走正规链上执行路线：自有 burner wallet、公开 BSC RPC、PancakeSwap quote、Universal Router gas simulation、签名交易、多 RPC 广播。它不做 mempool 攻击、sandwich、节点干扰或绕过平台规则。
@@ -107,7 +107,19 @@ npm run share:launch -- --first-block --first-block-tier acceptable --first-bloc
 - `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；发送前会打印 quote 估算数量和 minOut。
 - `--first-block`：不等 quote 成功，开盘前按目标 tier 的最高接受均价反推 `minOut`，预构建并预签名 raw transaction，在 `launchTime + --first-block-broadcast-offset-ms` 广播。默认选择最高价格上限的 tier，也就是当前 `acceptable` 档。
 - `--first-block-gas-limit 300000`：首区块路径不做开盘前 gas simulation，因为 hook 未开始时 simulation 会 revert；使用固定 gas limit。`300000 gas * 5 gwei = 0.0015 BNB`，是否超过 `1U` 取决于当时 BNB 价格。
-- `--first-block-broadcast-offset-ms -150`：默认提前 150ms 广播，争取进开盘区块；如果太早被前一区块打包，会因为 hook 未开始而 revert。这个 gas 成本通常不是主要风险，主要风险是 nonce 被占用，所以程序只有在收到失败回执后才回落到 quote 路径。
+- `--first-block-broadcast-offset-ms -150`：默认提前 150ms 广播，争取进开盘区块；如果太早被前一区块打包，会因为 hook 未开始而 revert。
+- `--first-block-receipt-timeout-ms 12000`：首区块交易超过这个时间还没有 receipt，就进入 pending 处理。默认不回落买第二笔，避免 nonce 冲突。
+- `--first-block-on-pending wait|replace|cancel`：`wait` 只告警等待；`replace` 用同 nonce、更高 gas 重发同一笔买入；`cancel` 用同 nonce 自转账取消队列，不再买。
+- `--replacement-gas-price-multiplier-bps 12500`：replacement/cancel 默认把原 gas price 提高 25% 再广播；也支持 `--replacement-gas-price-gwei-fixed / floor / cap`。
+
+复盘最新一次运行：
+
+```bash
+npm run share:postmortem -- --offline
+npm run share:postmortem -- --run data/runs/具体文件.jsonl --launch-block 97068324
+```
+
+`--offline` 只读本地 run log；不加 `--offline` 会尝试读取链上 receipt、txIndex 和 launch block 里的候选交易。
 
 通用真实买/卖测试走同一个 Infinity Universal Router 路径：
 
