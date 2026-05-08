@@ -167,7 +167,10 @@ ensure_role() {
         {
           \"Effect\": \"Allow\",
           \"Action\": [\"ssm:GetParameter\", \"ssm:GetParameters\", \"ssm:GetParametersByPath\"],
-          \"Resource\": \"arn:aws:ssm:${REGION}:${account_id}:parameter${PARAM_PREFIX}/*\"
+          \"Resource\": [
+            \"arn:aws:ssm:${REGION}:${account_id}:parameter${PARAM_PREFIX}\",
+            \"arn:aws:ssm:${REGION}:${account_id}:parameter${PARAM_PREFIX}/*\"
+          ]
         },
         {
           \"Effect\": \"Allow\",
