@@ -130,6 +130,39 @@ const scenarios = [
     multiRpcBroadcast: true,
     quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
     expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true, writeCalls: 0, broadcastCalls: 1 }
+  },
+  {
+    id: "S18",
+    name: "首区块模式预签名并临界广播，不等 quote 成功",
+    firstBlock: true,
+    quoteAttempts: [{ quotes: { default: { ok: false, error: "quote should not be used" } } }],
+    expected: {
+      action: "BUY_EXACT_IN",
+      reason: "FIRST_BLOCK_PREBROADCAST",
+      amountInUsdt: "10",
+      tier: "acceptable",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 1,
+      quoteCalls: 0
+    }
+  },
+  {
+    id: "S19",
+    name: "首区块交易失败后，有回执才回落到 quote 安全路径",
+    firstBlock: true,
+    receiptStatuses: ["reverted", "success"],
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "BUY_EXACT_IN",
+      reason: "MATCHED_TIER_IDEAL",
+      amountInUsdt: "20",
+      tier: "ideal",
+      sent: true,
+      writeCalls: 1,
+      broadcastCalls: 1,
+      quoteCalls: 2
+    }
   }
 ];
 
@@ -231,9 +264,11 @@ function createMockClient({ config, scenario }) {
       return gasPrice;
     },
     async waitForTransactionReceipt({ hash }) {
+      const status = scenario.receiptStatuses?.[scenario.receiptCalls] || scenario.receiptStatus || "success";
+      scenario.receiptCalls += 1;
       return {
         hash,
-        status: "success",
+        status,
         blockNumber: 97_000_001n,
         gasUsed: gas,
         effectiveGasPrice: gasPrice
@@ -264,6 +299,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
     quoteCalls: 0,
     writeCalls: 0,
     broadcastCalls: 0,
+    receiptCalls: 0,
     tiersPerAttempt: baseConfig.execution.autoBuyTiers.length,
     ...rawScenario
   };
@@ -291,6 +327,16 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
   }
   if (scenario.multiRpcBroadcast) {
     argv.push("--multi-rpc-broadcast", "--broadcast-public", "--broadcast-labels", "public-bsc");
+  }
+  if (scenario.firstBlock) {
+    argv.push(
+      "--first-block",
+      "--broadcast-public",
+      "--broadcast-labels",
+      "public-bsc",
+      "--first-block-broadcast-offset-ms",
+      "0"
+    );
   }
   const account = {
     address: SIM_ACCOUNT,
@@ -321,7 +367,13 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
         return `0x${scenario.id.toLowerCase().padEnd(64, "b")}`;
       }
     });
-    return { ...result, events: logger.events, writeCalls: scenario.writeCalls, broadcastCalls: scenario.broadcastCalls };
+    return {
+      ...result,
+      events: logger.events,
+      writeCalls: scenario.writeCalls,
+      broadcastCalls: scenario.broadcastCalls,
+      quoteCalls: scenario.quoteCalls
+    };
   } catch (error) {
     const message = error.shortMessage || error.message || String(error);
     const reason =
@@ -337,7 +389,14 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
                 ? "BNB_GAS_TOO_LOW"
                 : message;
     const action = reason === "HOOK_NOT_STARTED" ? "WAIT" : "SKIP";
-    return { action, reason, events: logger.events, writeCalls: scenario.writeCalls, broadcastCalls: scenario.broadcastCalls };
+    return {
+      action,
+      reason,
+      events: logger.events,
+      writeCalls: scenario.writeCalls,
+      broadcastCalls: scenario.broadcastCalls,
+      quoteCalls: scenario.quoteCalls
+    };
   }
 }
 
@@ -370,6 +429,13 @@ async function main() {
         scenario.expected.broadcastCalls ?? 0,
         `${scenario.id} should trigger expected fake raw broadcasts`
       );
+      if (scenario.expected.quoteCalls !== undefined) {
+        assert.equal(
+          result.quoteCalls,
+          scenario.expected.quoteCalls,
+          `${scenario.id} should trigger expected quote calls`
+        );
+      }
     } else {
       assert.equal(result.writeCalls, 0, `${scenario.id} should not trigger fake writeContract`);
       assert.equal(result.broadcastCalls, 0, `${scenario.id} should not trigger fake raw broadcast`);

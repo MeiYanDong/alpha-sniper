@@ -87,6 +87,12 @@ npm run share:launch -- --send --auto-exit --auto-approve-exit
 npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
+首区块竞争模式：
+
+```bash
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+```
+
 这个模式仍然只走正规链上执行路线：自有 burner wallet、公开 BSC RPC、PancakeSwap quote、Universal Router gas simulation、签名交易、多 RPC 广播。它不做 mempool 攻击、sandwich、节点干扰或绕过平台规则。
 
 关键差异：
@@ -96,8 +102,12 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-l
 - `--quote-probe-lead-ms 10000`：开盘前最后 10 秒开始直接探测 quote，quote 成功且价格匹配就进入买入路径，不只等 hook poll。
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
 - `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
+- `--gas-price-gwei-floor / --gas-price-gwei-cap / --gas-price-gwei-fixed`：给 gas price 加绝对下限、上限或固定值，避免“当前 gas 太低，2x 仍然不够”的问题。
 - `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；默认不打印 RPC URL、私钥或 raw signed transaction。
 - `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；发送前会打印 quote 估算数量和 minOut。
+- `--first-block`：不等 quote 成功，开盘前按目标 tier 的最高接受均价反推 `minOut`，预构建并预签名 raw transaction，在 `launchTime + --first-block-broadcast-offset-ms` 广播。默认选择最高价格上限的 tier，也就是当前 `acceptable` 档。
+- `--first-block-gas-limit 300000`：首区块路径不做开盘前 gas simulation，因为 hook 未开始时 simulation 会 revert；使用固定 gas limit。`300000 gas * 5 gwei = 0.0015 BNB`，是否超过 `1U` 取决于当时 BNB 价格。
+- `--first-block-broadcast-offset-ms -150`：默认提前 150ms 广播，争取进开盘区块；如果太早被前一区块打包，会因为 hook 未开始而 revert。这个 gas 成本通常不是主要风险，主要风险是 nonce 被占用，所以程序只有在收到失败回执后才回落到 quote 路径。
 
 通用真实买/卖测试走同一个 Infinity Universal Router 路径：
 
@@ -190,7 +200,7 @@ npm run data:sample -- --count 12 --interval-ms 5000
 
 我核对了 hook 已验证源码。这个 hook 的核心限制很直接：交易开始前 `beforeSwap` 会 `PoolNotStarted`，所以现在普通 Quoter 报价失败是正常的。到开始时间后，程序会重新跑报价探针，再看是否满足买入规则。
 
-2026-05-08 实盘复盘：程序在 `18:00:00.603` 观察到 hook started，`18:00:00.604` 拿到第一笔成功 quote，均价已经约 `0.740876`，因此按规则跳过。首个大额买单已经在开盘区块 `97068324` 内，`txIndex=1`，约 `600,000 USDT`，均价约 `0.4209`。这说明主要问题不是 `20U` 金额太小，而是“开盘后确认 quote 再发单”的架构天然晚于同区块抢跑资金；后续要进首区块，需要预构建交易、严格滑点和同一 raw tx 多 RPC 广播，而不是单纯加轮询频率。
+2026-05-08 实盘复盘：程序在 `18:00:00.603` 观察到 hook started，`18:00:00.604` 拿到第一笔成功 quote，均价已经约 `0.740876`，因此按规则跳过。首个大额买单已经在开盘区块 `97068324` 内，`txIndex=1`，约 `600,000 USDT`，均价约 `0.4209`。这说明主要问题不是 `20U` 金额太小，而是“开盘后确认 quote 再发单”的架构天然晚于同区块抢跑资金；后续要进首区块，需要预构建交易、严格 `minOut`、预签名和同一 raw tx 多 RPC 临界广播，而不是单纯加轮询频率。
 
 ## Binance / OKX API 的位置
 

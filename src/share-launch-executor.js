@@ -80,6 +80,19 @@ function shortErrorMessage(error) {
   return error?.shortMessage || error?.message || String(error);
 }
 
+function parseGweiArg(argv, name) {
+  const value = argValueFrom(argv, name, null);
+  return value === null || value === undefined ? null : parseUnits(String(value), 9);
+}
+
+function maxBigInt(a, b) {
+  return a > b ? a : b;
+}
+
+function minBigInt(a, b) {
+  return a < b ? a : b;
+}
+
 function loadAccount() {
   const privateKey = process.env.PRIVATE_KEY;
   if (!privateKey) throw new Error("PRIVATE_KEY is missing in .env.local");
@@ -146,6 +159,37 @@ function sortedTiers(execution) {
   return [...execution.autoBuyTiers].sort(
     (a, b) => Number(b.amountInUsdt) - Number(a.amountInUsdt)
   );
+}
+
+function tierMaxAvgPriceUsd(tier) {
+  return tier.firstBlockMaxAvgPriceUsd || tier.avgPriceLteUsd || tier.avgPriceLtUsd || null;
+}
+
+function selectFirstBlockTier({ execution, argv }) {
+  const requested = argValueFrom(argv, "--first-block-tier", null);
+  if (requested) {
+    const tier = execution.autoBuyTiers.find((item) => item.name === requested);
+    if (!tier) throw new Error(`Unknown first-block tier: ${requested}`);
+    return tier;
+  }
+
+  const candidates = execution.autoBuyTiers
+    .filter((tier) => tierMaxAvgPriceUsd(tier))
+    .sort((a, b) => {
+      const priceDelta = new Decimal(String(tierMaxAvgPriceUsd(b))).cmp(
+        new Decimal(String(tierMaxAvgPriceUsd(a)))
+      );
+      if (priceDelta !== 0) return priceDelta;
+      return new Decimal(String(b.amountInUsdt)).cmp(new Decimal(String(a.amountInUsdt)));
+    });
+  if (candidates.length === 0) throw new Error("No first-block tier has a max average price");
+  return candidates[0];
+}
+
+function minOutFromMaxAvgPrice({ amountIn, maxAvgPriceUsd, quoteDecimals, targetDecimals }) {
+  const quoteHuman = toDecimalAmount(amountIn, quoteDecimals);
+  const minTargetHuman = quoteHuman.div(new Decimal(String(maxAvgPriceUsd)));
+  return parseUnits(minTargetHuman.toFixed(targetDecimals, Decimal.ROUND_FLOOR), targetDecimals);
 }
 
 async function preflight({ client, account, config, quoteMeta, targetMeta, execution }) {
@@ -553,6 +597,123 @@ async function broadcastRawTransaction({ provider, serializedTransaction, timeou
   return rawRpcCall(provider.url, "eth_sendRawTransaction", [serializedTransaction], { timeoutMs });
 }
 
+async function resolveGasPrice({ client, argv, fastLaunch }) {
+  const fixed = parseGweiArg(argv, "--gas-price-gwei-fixed");
+  const floor = parseGweiArg(argv, "--gas-price-gwei-floor");
+  const cap = parseGweiArg(argv, "--gas-price-gwei-cap");
+  const multiplierBps = BigInt(
+    argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "20000" : "12000")
+  );
+
+  if (floor !== null && cap !== null && floor > cap) {
+    throw new Error("--gas-price-gwei-floor cannot be greater than --gas-price-gwei-cap");
+  }
+
+  if (fixed !== null) {
+    return {
+      gasPrice: fixed,
+      baseGasPrice: null,
+      gasPriceMultiplierBps: multiplierBps,
+      gasPriceFloor: floor,
+      gasPriceCap: cap,
+      gasPriceFixed: fixed
+    };
+  }
+
+  const baseGasPrice = await client.getGasPrice();
+  let gasPrice = (baseGasPrice * multiplierBps) / 10_000n;
+  if (floor !== null) gasPrice = maxBigInt(gasPrice, floor);
+  if (cap !== null) gasPrice = minBigInt(gasPrice, cap);
+
+  return {
+    gasPrice,
+    baseGasPrice,
+    gasPriceMultiplierBps: multiplierBps,
+    gasPriceFloor: floor,
+    gasPriceCap: cap,
+    gasPriceFixed: null
+  };
+}
+
+function getBroadcastProviders({ config, argv }) {
+  const includePublic = hasFlag("--broadcast-public", argv);
+  const labelsCsv = argValueFrom(argv, "--broadcast-labels", "");
+  const providers = filterRpcProviders(getSafeRpcProviders(config, { includePublic }), labelsCsv);
+  if (providers.length === 0) throw new Error("No RPC providers available for raw transaction broadcast");
+  return providers;
+}
+
+async function signRawBuyTransaction({ config, account, client, tx, gas, gasPrice }) {
+  if (typeof account.signTransaction !== "function") {
+    throw new Error("Raw transaction broadcast requires a local account that can sign transactions");
+  }
+
+  const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
+  const serializedTransaction = await account.signTransaction({
+    chainId: Number(config.chainId || bsc.id),
+    nonce,
+    to: config.addresses.infinityUniversalRouter,
+    data: tx.calldata,
+    gas,
+    gasPrice,
+    value: 0n,
+    type: "legacy"
+  });
+
+  return { serializedTransaction, nonce };
+}
+
+async function broadcastPreparedRawTransaction({
+  providers,
+  serializedTransaction,
+  timeoutMs,
+  logger,
+  eventName = "multi_rpc_broadcast",
+  broadcastRawTransactionFn = broadcastRawTransaction
+}) {
+  const startedAt = performance.now();
+  const results = await Promise.all(
+    providers.map(async (provider) => {
+      try {
+        const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
+        return { ok: true, label: provider.label, hash };
+      } catch (error) {
+        return {
+          ok: false,
+          label: provider.label,
+          errorType: classifyRpcError(error),
+          message: error.shortMessage || error.message || String(error)
+        };
+      }
+    })
+  );
+  const success = results.find((result) => result.ok);
+  logger.event(eventName, {
+    latencyMs: Math.round(performance.now() - startedAt),
+    providers: results.map((result) =>
+      result.ok
+        ? { label: result.label, ok: true, hash: result.hash }
+        : { label: result.label, ok: false, errorType: result.errorType }
+    )
+  });
+
+  if (!success) {
+    throw new Error(
+      `Raw transaction broadcast failed: ${results
+        .map((result) => `${result.label}:${result.errorType || "unknown"}`)
+        .join(", ")}`
+    );
+  }
+
+  return {
+    hash: success.hash,
+    okCount: results.filter((result) => result.ok).length,
+    providerCount: results.length,
+    winnerLabel: success.label,
+    results
+  };
+}
+
 async function sendBuyTransaction({
   config,
   account,
@@ -581,61 +742,371 @@ async function sendBuyTransaction({
     throw new Error("Multi RPC broadcast requires a local account that can sign raw transactions");
   }
 
-  const includePublic = hasFlag("--broadcast-public", argv);
-  const labelsCsv = argValueFrom(argv, "--broadcast-labels", "");
   const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
-  const providers = filterRpcProviders(getSafeRpcProviders(config, { includePublic }), labelsCsv);
-  if (providers.length === 0) throw new Error("No RPC providers available for multi RPC broadcast");
-
-  const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
-  const serializedTransaction = await account.signTransaction({
-    chainId: Number(config.chainId || bsc.id),
-    nonce,
-    to: config.addresses.infinityUniversalRouter,
-    data: tx.calldata,
+  const providers = getBroadcastProviders({ config, argv });
+  const { serializedTransaction } = await signRawBuyTransaction({
+    config,
+    account,
+    client,
+    tx,
     gas,
-    gasPrice,
-    value: 0n,
-    type: "legacy"
+    gasPrice
+  });
+  const broadcast = await broadcastPreparedRawTransaction({
+    providers,
+    serializedTransaction,
+    timeoutMs,
+    logger,
+    broadcastRawTransactionFn
   });
 
-  const startedAt = performance.now();
-  const results = await Promise.all(
-    providers.map(async (provider) => {
-      try {
-        const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
-        return { ok: true, label: provider.label, hash };
-      } catch (error) {
-        return {
-          ok: false,
-          label: provider.label,
-          errorType: classifyRpcError(error),
-          message: error.shortMessage || error.message || String(error)
-        };
-      }
+  console.log(`Buy tx broadcast: ${broadcast.hash} via ${broadcast.winnerLabel}, ok=${broadcast.okCount}/${broadcast.providerCount}`);
+  return broadcast.hash;
+}
+
+function actualEntryAvg({ beforeQuote, afterQuote, beforeTarget, afterTarget, quoteMeta, targetMeta, fallbackAvg }) {
+  if (beforeQuote <= afterQuote || afterTarget <= beforeTarget) return fallbackAvg || null;
+  const quoteSpent = beforeQuote - afterQuote;
+  const targetReceived = afterTarget - beforeTarget;
+  const targetHuman = toDecimalAmount(targetReceived, targetMeta.decimals);
+  if (targetHuman.isZero()) return fallbackAvg || null;
+  return toDecimalAmount(quoteSpent, quoteMeta.decimals).div(targetHuman);
+}
+
+async function finalizeBuyAfterReceipt({
+  config,
+  account,
+  client,
+  walletClient,
+  hash,
+  receipt,
+  sentAt,
+  beforeQuote,
+  beforeTarget,
+  quoteMeta,
+  targetMeta,
+  chosen,
+  autoExit,
+  argv,
+  logger,
+  nowFn,
+  sleepFn,
+  getTokenMetaFn,
+  quoteFn,
+  gasBufferBps,
+  gasPriceMultiplierBps
+}) {
+  const confirmedAt = nowFn();
+  console.log(`Buy tx status: ${receipt.status}, confirmation ${(confirmedAt - sentAt) / 1000}s`);
+  logger.event("tx_confirmed", {
+    hash,
+    status: receipt.status,
+    blockNumber: receipt.blockNumber,
+    gasUsed: receipt.gasUsed,
+    effectiveGasPrice: receipt.effectiveGasPrice,
+    confirmationMs: confirmedAt - sentAt
+  });
+
+  const [afterTarget, afterQuote, bnb] = await Promise.all([
+    client.readContract({
+      address: config.targetToken,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account.address]
+    }),
+    client.readContract({
+      address: config.quoteToken,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account.address]
+    }),
+    client.getBalance({ address: account.address })
+  ]);
+  const entryAvg = actualEntryAvg({
+    beforeQuote,
+    afterQuote,
+    beforeTarget,
+    afterTarget,
+    quoteMeta,
+    targetMeta,
+    fallbackAvg: chosen.avg
+  });
+  console.log(`${quoteMeta.symbol}: ${fmtDecimal(toDecimalAmount(beforeQuote, quoteMeta.decimals), 8)} -> ${fmtDecimal(toDecimalAmount(afterQuote, quoteMeta.decimals), 8)}`);
+  console.log(`${targetMeta.symbol}: ${fmtDecimal(toDecimalAmount(beforeTarget, targetMeta.decimals), 8)} -> ${fmtDecimal(toDecimalAmount(afterTarget, targetMeta.decimals), 8)}`);
+  console.log(`BNB: ${formatEther(bnb)}`);
+  logger.event("final_balances", {
+    beforeQuote,
+    afterQuote,
+    beforeTarget,
+    afterTarget,
+    bnb,
+    entryAvg: entryAvg?.toString()
+  });
+
+  let exitResult = null;
+  if (autoExit && receipt.status === "success") {
+    if (hasFlag("--auto-approve-exit", argv) && afterTarget > 0n) {
+      console.log(
+        `Auto exit approval: approving actual ${fmtDecimal(toDecimalAmount(afterTarget, targetMeta.decimals), 8)} ${targetMeta.symbol} balance before exit watch.`
+      );
+      logger.event("auto_exit_approval_starting", { amount: afterTarget });
+      await ensureExitApproval({
+        client,
+        walletClient,
+        account,
+        config,
+        targetMeta,
+        amount: afterTarget,
+        logger,
+        gasBufferBps,
+        gasPriceMultiplierBps
+      });
+      logger.event("auto_exit_approval_finished", { amount: afterTarget });
+    }
+    logger.event("auto_exit_starting", { entryAvgPriceUsd: entryAvg?.toString() });
+    exitResult = await runExitWatcher({
+      config,
+      account,
+      client,
+      walletClient,
+      entryAvgPriceUsd: entryAvg?.toString(),
+      logger,
+      argv,
+      nowFn,
+      sleepFn,
+      getTokenMetaFn,
+      quoteFn
+    });
+    logger.event("auto_exit_finished", { exitResult });
+  }
+
+  return { exitResult, entryAvg, afterQuote, afterTarget, bnb };
+}
+
+async function waitUntil({ targetMs, nowFn, sleepFn }) {
+  while (nowFn() < targetMs) {
+    await sleepFn(Math.min(1000, Math.max(1, targetMs - nowFn())));
+  }
+}
+
+async function runFirstBlockPrebroadcast({
+  config,
+  account,
+  client,
+  hotReadClient,
+  walletClient,
+  execution,
+  poolKey,
+  quoteMeta,
+  targetMeta,
+  preflightState,
+  autoExit,
+  send,
+  argv,
+  logger,
+  nowFn,
+  sleepFn,
+  getTokenMetaFn,
+  quoteFn,
+  broadcastRawTransactionFn
+}) {
+  const tier = selectFirstBlockTier({ execution, argv });
+  const amountInUsdt = argValueFrom(argv, "--first-block-amount-usdt", tier.amountInUsdt);
+  const maxAvgPriceUsd =
+    argValueFrom(argv, "--first-block-max-avg-price", tierMaxAvgPriceUsd(tier)) ||
+    execution.autoBuyMaxAvgPriceUsd;
+  if (!maxAvgPriceUsd) throw new Error("First-block mode requires --first-block-max-avg-price or a tier max price");
+
+  const amountIn = parseUnits(String(amountInUsdt), quoteMeta.decimals);
+  const minOut = minOutFromMaxAvgPrice({
+    amountIn,
+    maxAvgPriceUsd,
+    quoteDecimals: quoteMeta.decimals,
+    targetDecimals: targetMeta.decimals
+  });
+  const zeroForOne = sameAddress(poolKey[0], config.quoteToken);
+  const launchAt = new Date(config.launchTime).getTime();
+  const deadlineSeconds = Number(argValueFrom(argv, "--deadline-seconds", "45"));
+  const deadlineBaseMs = Math.max(nowFn(), launchAt);
+  const deadline = BigInt(Math.floor(deadlineBaseMs / 1000) + deadlineSeconds);
+  const tx = buildInfinityExactInputSingleExecute({
+    poolKey,
+    zeroForOne,
+    amountIn,
+    amountOutMinimum: minOut,
+    inputCurrency: config.quoteToken,
+    outputCurrency: config.targetToken,
+    deadline
+  });
+  const gas = BigInt(argValueFrom(argv, "--first-block-gas-limit", "300000"));
+  const gasPriceInfo = await resolveGasPrice({ client: hotReadClient, argv, fastLaunch: true });
+  const estimatedGasCost = gas * gasPriceInfo.gasPrice;
+  const beforeReadStartedAt = performance.now();
+  const [beforeTarget, beforeQuote] = await Promise.all([
+    client.readContract({
+      address: config.targetToken,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account.address]
+    }),
+    client.readContract({
+      address: config.quoteToken,
+      abi: erc20Abi,
+      functionName: "balanceOf",
+      args: [account.address]
     })
-  );
-  const success = results.find((result) => result.ok);
-  logger.event("multi_rpc_broadcast", {
-    latencyMs: Math.round(performance.now() - startedAt),
-    providers: results.map((result) =>
-      result.ok
-        ? { label: result.label, ok: true, hash: result.hash }
-        : { label: result.label, ok: false, errorType: result.errorType }
-    )
-  });
+  ]);
 
-  if (!success) {
+  if (preflightState.bnb < estimatedGasCost) {
     throw new Error(
-      `Multi RPC broadcast failed: ${results
-        .map((result) => `${result.label}:${result.errorType || "unknown"}`)
-        .join(", ")}`
+      `BNB balance is below first-block gas budget: have ${formatEther(preflightState.bnb)}, need ${formatEther(estimatedGasCost)}`
     );
   }
 
-  const okCount = results.filter((result) => result.ok).length;
-  console.log(`Buy tx broadcast: ${success.hash} via ${success.label}, ok=${okCount}/${results.length}`);
-  return success.hash;
+  const chosen = {
+    tier: { ...tier, amountInUsdt: String(amountInUsdt) },
+    amountIn,
+    amountOut: null,
+    avg: new Decimal(String(maxAvgPriceUsd)),
+    quoteGas: 0n,
+    latencyMs: Math.round(performance.now() - beforeReadStartedAt),
+    zeroForOne,
+    firstBlock: true
+  };
+  const broadcastOffsetMs = Number(argValueFrom(argv, "--first-block-broadcast-offset-ms", "-150"));
+  const broadcastAt = launchAt + broadcastOffsetMs;
+  const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
+  const providers = getBroadcastProviders({ config, argv });
+  const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
+
+  console.log(
+    `First-block plan: BUY ${amountInUsdt} ${quoteMeta.symbol}, tier ${tier.name}, maxAvg ${maxAvgPriceUsd}, minOut ${fmtDecimal(toDecimalAmount(minOut, targetMeta.decimals), 8)} ${targetMeta.symbol}, gasLimit ${gas.toString()}, gasPrice ${gasPriceInfo.gasPrice.toString()}`
+  );
+  logger.event("first_block_prebuild_ready", {
+    tier: tier.name,
+    amountInUsdt,
+    amountIn,
+    maxAvgPriceUsd,
+    minOut,
+    gas,
+    gasPrice: gasPriceInfo.gasPrice,
+    baseGasPrice: gasPriceInfo.baseGasPrice,
+    gasPriceMultiplierBps: gasPriceInfo.gasPriceMultiplierBps,
+    gasPriceFloor: gasPriceInfo.gasPriceFloor,
+    gasPriceCap: gasPriceInfo.gasPriceCap,
+    gasPriceFixed: gasPriceInfo.gasPriceFixed,
+    estimatedGasCost,
+    deadline,
+    broadcastAt: new Date(broadcastAt).toISOString(),
+    broadcastOffsetMs,
+    providers: providers.map((provider) => provider.label)
+  });
+
+  if (!send) {
+    logger.event("first_block_dry_run_exit");
+    return {
+      action: "FIRST_BLOCK_PLAN",
+      reason: "DRY_RUN",
+      sent: false,
+      amountInUsdt: String(amountInUsdt),
+      tier: tier.name,
+      maxAvgPriceUsd: String(maxAvgPriceUsd),
+      minOut: minOut.toString()
+    };
+  }
+
+  const { serializedTransaction, nonce } = await signRawBuyTransaction({
+    config,
+    account,
+    client,
+    tx,
+    gas,
+    gasPrice: gasPriceInfo.gasPrice
+  });
+  logger.event("first_block_presigned", {
+    nonce,
+    gas,
+    gasPrice: gasPriceInfo.gasPrice,
+    broadcastAt: new Date(broadcastAt).toISOString()
+  });
+
+  await waitUntil({ targetMs: broadcastAt, nowFn, sleepFn });
+  const sentAt = nowFn();
+  const broadcast = await broadcastPreparedRawTransaction({
+    providers,
+    serializedTransaction,
+    timeoutMs,
+    logger,
+    eventName: "first_block_broadcast",
+    broadcastRawTransactionFn
+  });
+  console.log(
+    `First-block tx broadcast: ${broadcast.hash} via ${broadcast.winnerLabel}, ok=${broadcast.okCount}/${broadcast.providerCount}`
+  );
+  logger.event("tx_sent", {
+    hash: broadcast.hash,
+    sentAt: new Date(sentAt).toISOString(),
+    mode: "first_block_prebroadcast"
+  });
+
+  const receipt = await client.waitForTransactionReceipt({ hash: broadcast.hash });
+  if (receipt.status !== "success") {
+    console.log(`First-block tx status: ${receipt.status}; ${hasFlag("--no-first-block-fallback", argv) ? "not falling back." : "falling back to quote path."}`);
+    logger.event("first_block_failed", {
+      hash: broadcast.hash,
+      status: receipt.status,
+      blockNumber: receipt.blockNumber,
+      gasUsed: receipt.gasUsed,
+      effectiveGasPrice: receipt.effectiveGasPrice
+    });
+    if (hasFlag("--no-first-block-fallback", argv)) {
+      return {
+        action: "SKIP",
+        reason: "FIRST_BLOCK_TX_FAILED",
+        sent: true,
+        hash: broadcast.hash,
+        receiptStatus: receipt.status
+      };
+    }
+    return { fallback: true, reason: "FIRST_BLOCK_TX_FAILED", hash: broadcast.hash, receiptStatus: receipt.status };
+  }
+
+  const finalized = await finalizeBuyAfterReceipt({
+    config,
+    account,
+    client,
+    walletClient,
+    hash: broadcast.hash,
+    receipt,
+    sentAt,
+    beforeQuote,
+    beforeTarget,
+    quoteMeta,
+    targetMeta,
+    chosen,
+    autoExit,
+    argv,
+    logger,
+    nowFn,
+    sleepFn,
+    getTokenMetaFn,
+    quoteFn,
+    gasBufferBps,
+    gasPriceMultiplierBps: gasPriceInfo.gasPriceMultiplierBps
+  });
+
+  return {
+    action: "BUY_EXACT_IN",
+    reason: "FIRST_BLOCK_PREBROADCAST",
+    amountInUsdt: String(amountInUsdt),
+    tier: tier.name,
+    avg: finalized.entryAvg?.toString(),
+    maxAvgPriceUsd: String(maxAvgPriceUsd),
+    sent: true,
+    hash: broadcast.hash,
+    receiptStatus: receipt.status,
+    exitResult: finalized.exitResult
+  };
 }
 
 export async function runLaunchExecutor({
@@ -658,6 +1129,7 @@ export async function runLaunchExecutor({
   const preflightOnly = hasFlag("--preflight-only", argv);
   const autoExit = hasFlag("--auto-exit", argv);
   const fastLaunch = hasFlag("--fast-launch", argv);
+  const firstBlock = hasFlag("--first-block", argv) || hasFlag("--prebuild-first-block", argv);
   const cacheEnabled = !hasFlag("--no-cache", argv) && getTokenMetaFn === getTokenMeta;
   const cache = createProjectCache(config, { enabled: cacheEnabled });
   const [targetMeta, quoteMeta, poolKey] = await Promise.all([
@@ -731,6 +1203,7 @@ export async function runLaunchExecutor({
     preflightOnly,
     autoExit,
     fastLaunch,
+    firstBlock,
     rpcRaceWanted,
     rpcRaceEnabled,
     rpcRaceLabels,
@@ -761,6 +1234,36 @@ export async function runLaunchExecutor({
     logger.event("preflight_only_exit");
     console.log("Preflight-only: wallet, balance, approvals, token metadata, and pool key are ready.");
     return { action: "PREFLIGHT_ONLY", reason: "PREFLIGHT_OK" };
+  }
+
+  if (firstBlock) {
+    const firstBlockResult = await runFirstBlockPrebroadcast({
+      config,
+      account,
+      client,
+      hotReadClient,
+      walletClient,
+      execution,
+      poolKey,
+      quoteMeta,
+      targetMeta,
+      preflightState,
+      autoExit,
+      send,
+      argv,
+      logger,
+      nowFn,
+      sleepFn,
+      getTokenMetaFn,
+      quoteFn,
+      broadcastRawTransactionFn
+    });
+    if (!firstBlockResult?.fallback) return firstBlockResult;
+    logger.event("first_block_fallback_starting", {
+      reason: firstBlockResult.reason,
+      hash: firstBlockResult.hash,
+      receiptStatus: firstBlockResult.receiptStatus
+    });
   }
 
   let choice;
@@ -816,10 +1319,7 @@ export async function runLaunchExecutor({
   });
 
   const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
-  const gasPriceMultiplierBps = BigInt(
-    argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "20000" : "12000")
-  );
-  const [gas, gasPrice, beforeTarget, beforeQuote] = await Promise.all([
+  const [gas, gasPriceInfo, beforeTarget, beforeQuote] = await Promise.all([
     hotReadClient.estimateContractGas({
       account,
       address: config.addresses.infinityUniversalRouter,
@@ -827,7 +1327,7 @@ export async function runLaunchExecutor({
       functionName: "execute",
       args: [tx.commands, tx.inputs, tx.deadline]
     }),
-    hotReadClient.getGasPrice(),
+    resolveGasPrice({ client: hotReadClient, argv, fastLaunch }),
     client.readContract({
       address: config.targetToken,
       abi: erc20Abi,
@@ -842,7 +1342,7 @@ export async function runLaunchExecutor({
     })
   ]);
   const bufferedGas = (gas * gasBufferBps) / 10_000n;
-  const boostedGasPrice = (gasPrice * gasPriceMultiplierBps) / 10_000n;
+  const boostedGasPrice = gasPriceInfo.gasPrice;
   const estimatedGasCost = bufferedGas * boostedGasPrice;
 
   if (preflightState.bnb < estimatedGasCost) {
@@ -876,7 +1376,11 @@ export async function runLaunchExecutor({
     quoteLatencyMs: Math.round(chosen.latencyMs),
     gas,
     bufferedGas,
-    gasPrice,
+    gasPrice: gasPriceInfo.baseGasPrice,
+    gasPriceMultiplierBps: gasPriceInfo.gasPriceMultiplierBps,
+    gasPriceFloor: gasPriceInfo.gasPriceFloor,
+    gasPriceCap: gasPriceInfo.gasPriceCap,
+    gasPriceFixed: gasPriceInfo.gasPriceFixed,
     boostedGasPrice,
     estimatedGasCost
   });
@@ -910,90 +1414,40 @@ export async function runLaunchExecutor({
   console.log(`Buy tx sent: ${hash}`);
   logger.event("tx_sent", { hash, sentAt: new Date(sentAt).toISOString() });
   const receipt = await client.waitForTransactionReceipt({ hash });
-  const confirmedAt = nowFn();
-  console.log(`Buy tx status: ${receipt.status}, confirmation ${(confirmedAt - sentAt) / 1000}s`);
-  logger.event("tx_confirmed", {
+  const finalized = await finalizeBuyAfterReceipt({
+    config,
+    account,
+    client,
+    walletClient,
     hash,
-    status: receipt.status,
-    blockNumber: receipt.blockNumber,
-    gasUsed: receipt.gasUsed,
-    effectiveGasPrice: receipt.effectiveGasPrice,
-    confirmationMs: confirmedAt - sentAt
-  });
-
-  const [afterTarget, afterQuote, bnb] = await Promise.all([
-    client.readContract({
-      address: config.targetToken,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [account.address]
-    }),
-    client.readContract({
-      address: config.quoteToken,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [account.address]
-    }),
-    client.getBalance({ address: account.address })
-  ]);
-  console.log(`${quoteMeta.symbol}: ${fmtDecimal(toDecimalAmount(beforeQuote, quoteMeta.decimals), 8)} -> ${fmtDecimal(toDecimalAmount(afterQuote, quoteMeta.decimals), 8)}`);
-  console.log(`${targetMeta.symbol}: ${fmtDecimal(toDecimalAmount(beforeTarget, targetMeta.decimals), 8)} -> ${fmtDecimal(toDecimalAmount(afterTarget, targetMeta.decimals), 8)}`);
-  console.log(`BNB: ${formatEther(bnb)}`);
-  logger.event("final_balances", {
     beforeQuote,
-    afterQuote,
     beforeTarget,
-    afterTarget,
-    bnb
+    receipt,
+    sentAt,
+    quoteMeta,
+    targetMeta,
+    chosen,
+    autoExit,
+    argv,
+    logger,
+    nowFn,
+    sleepFn,
+    getTokenMetaFn,
+    quoteFn,
+    gasBufferBps,
+    gasPriceMultiplierBps: gasPriceInfo.gasPriceMultiplierBps
   });
-
-  let exitResult = null;
-  if (autoExit && receipt.status === "success") {
-    if (hasFlag("--auto-approve-exit", argv) && afterTarget > 0n) {
-      console.log(
-        `Auto exit approval: approving actual ${fmtDecimal(toDecimalAmount(afterTarget, targetMeta.decimals), 8)} ${targetMeta.symbol} balance before exit watch.`
-      );
-      logger.event("auto_exit_approval_starting", { amount: afterTarget });
-      await ensureExitApproval({
-        client,
-        walletClient,
-        account,
-        config,
-        targetMeta,
-        amount: afterTarget,
-        logger,
-        gasBufferBps,
-        gasPriceMultiplierBps
-      });
-      logger.event("auto_exit_approval_finished", { amount: afterTarget });
-    }
-    logger.event("auto_exit_starting", { entryAvgPriceUsd: chosen.avg?.toString() });
-    exitResult = await runExitWatcher({
-      config,
-      account,
-      client,
-      walletClient,
-      entryAvgPriceUsd: chosen.avg?.toString(),
-      logger,
-      argv,
-      nowFn,
-      sleepFn,
-      getTokenMetaFn,
-      quoteFn
-    });
-    logger.event("auto_exit_finished", { exitResult });
-  }
 
   return {
     action: "BUY_EXACT_IN",
     reason: `MATCHED_TIER_${chosen.tier.name}`.toUpperCase(),
     amountInUsdt: chosen.tier.amountInUsdt,
     tier: chosen.tier.name,
-    avg: chosen.avg?.toString(),
+    avg: finalized.entryAvg?.toString(),
     sent: true,
     hash,
     receiptStatus: receipt.status,
-    exitResult
+    exitResult: finalized.exitResult
   };
 }
 

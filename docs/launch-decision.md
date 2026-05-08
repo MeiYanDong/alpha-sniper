@@ -58,6 +58,12 @@ The active prewarm command now uses the speed-first route:
 npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
+For first-block competition, use the prebuilt route:
+
+```bash
+npm run share:launch -- --first-block --first-block-tier acceptable --first-block-broadcast-offset-ms -150 --first-block-gas-limit 300000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --gas-price-gwei-floor 3 --gas-price-gwei-cap 5 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+```
+
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
 
 With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack, Ankr standard BSC RPC, and public BSC RPC. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
@@ -67,6 +73,23 @@ With `--auto-approve-exit`, the launch executor estimates the sell approval amou
 With `--rpc-race`, the hot read path races Chainstack and Ankr standard BSC RPC for hook reads, exact-input quotes, Universal Router gas simulation, and gas price. Public RPC is deliberately excluded from the hot race. Wallet nonce, transaction receipt, balances, and final settlement reads remain on the normal client path.
 
 `--rpc-race` lowers read latency variance. It does not change the execution model: a transaction still has to be signed, broadcast, accepted by the network, and included by a validator.
+
+With `--first-block`, the executor changes execution model:
+
+- It selects a tier before launch. Default is the tier with the highest accepted average price, currently `acceptable`.
+- It computes `minOut` from the configured max average price, not from a live quote. For `10 USDT` at `0.38`, `minOut` is about `26.31578947 SHARE`.
+- It builds and signs the raw transaction before the broadcast moment.
+- It broadcasts at `launchTime + --first-block-broadcast-offset-ms`, defaulting to `-150ms`.
+- It uses fixed `--first-block-gas-limit` because pre-open gas simulation reverts on the hook.
+- If the first-block transaction reverts and the receipt is available, it can fall back to the quote-based safe path.
+- If the first-block transaction is still pending, do not send a second buy with uncertain nonce state.
+
+Gas note:
+
+- A failed pre-open hook revert is usually not the main economic risk at this size.
+- `300000 gas * 3 gwei = 0.0009 BNB`.
+- `300000 gas * 5 gwei = 0.0015 BNB`.
+- Whether that is below `1U` depends on live BNB price. The bigger operational risk is nonce occupation, not the gas fee itself.
 
 ## 2026-05-08 postmortem
 
@@ -87,7 +110,8 @@ Conclusion:
 - The program did the right thing by skipping; the quote was already too expensive.
 - The main failure cause was not that the configured `20U` amount was too small. Larger size would have made slippage worse.
 - The limiting architecture was post-open confirmation: `wait hook/quote -> decide -> sign/broadcast`. That route can react quickly after open, but it cannot beat transactions already included in the launch block.
-- To compete for first-block inclusion, the next architecture needs a prebuilt transaction near launch time, strict `minOut`/deadline protection, and same raw transaction multi-RPC broadcast. Hot RPC race still helps discovery, but it is not enough by itself.
+- First-block mode addresses that by moving calldata construction, minOut calculation, signing, and broadcast scheduling before the successful quote.
+- Hot RPC race still helps discovery and fallback, but it is not enough by itself.
 
 ## RPC boundary
 
