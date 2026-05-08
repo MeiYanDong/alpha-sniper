@@ -35,6 +35,14 @@ function formatPermit2Allowance(allowance, now) {
   };
 }
 
+function formatPermit2Expiration(permit2Allowance) {
+  if (permit2Allowance.expired) return " (expired/missing)";
+  const expiresAt = Number(permit2Allowance.expiration);
+  const maxDateSeconds = Math.floor(8640000000000000 / 1000);
+  if (expiresAt > maxDateSeconds) return " (expires far future)";
+  return ` (expires ${new Date(expiresAt * 1000).toISOString()})`;
+}
+
 async function main() {
   const config = loadConfigFromArgs();
   const owner = process.env.WALLET_ADDRESS;
@@ -91,8 +99,7 @@ async function main() {
   console.log(`Planned sell amount: ${fmtDecimal(toDecimalAmount(sellAmount, targetMeta.decimals), 8)} ${targetMeta.symbol}`);
   console.log(`ERC20 allowance to Permit2: ${fmtDecimal(toDecimalAmount(erc20Allowance, targetMeta.decimals), 8)} ${targetMeta.symbol}`);
   console.log(
-    `Permit2 allowance to Universal Router: ${fmtDecimal(toDecimalAmount(permit2Allowance.amount, targetMeta.decimals), 8)} ${targetMeta.symbol}` +
-      (permit2Allowance.expired ? " (expired/missing)" : ` (expires ${new Date(Number(permit2Allowance.expiration) * 1000).toISOString()})`)
+    `Permit2 allowance to Universal Router: ${fmtDecimal(toDecimalAmount(permit2Allowance.amount, targetMeta.decimals), 8)} ${targetMeta.symbol}${formatPermit2Expiration(permit2Allowance)}`
   );
   console.log(`Trading started: ${Boolean(infinity.hookStatus?.started)}`);
 
