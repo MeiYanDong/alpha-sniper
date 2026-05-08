@@ -30,6 +30,7 @@ import {
   getSafeRpcProviders,
   rawRpcCall
 } from "./rpc-providers.js";
+import { createRaceReadClient, DEFAULT_RPC_RACE_LABELS } from "./rpc-race.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const INCLUSIVE_PRICE_EPSILON = new Decimal("0.000000000001");
@@ -67,6 +68,16 @@ function argValue(name, fallback) {
 
 function hasFlag(name, argv = process.argv) {
   return argv.includes(name);
+}
+
+function shouldUseRpcRace({ fastLaunch, argv, quoteFn }) {
+  if (hasFlag("--no-rpc-race", argv)) return false;
+  if (quoteFn !== quoteInfinityCLExactInputSingle) return false;
+  return fastLaunch || hasFlag("--rpc-race", argv);
+}
+
+function shortErrorMessage(error) {
+  return error?.shortMessage || error?.message || String(error);
 }
 
 function loadAccount() {
@@ -682,17 +693,48 @@ export async function runLaunchExecutor({
           args: [config.protocols.infinityCL.poolId]
         })
   ]);
+  const rpcRaceWanted = shouldUseRpcRace({ fastLaunch, argv, quoteFn });
+  const rpcRaceLabelsCsv =
+    argValueFrom(argv, "--rpc-race-labels", DEFAULT_RPC_RACE_LABELS) || DEFAULT_RPC_RACE_LABELS;
+  const rpcRaceTimeoutMs = Number(argValueFrom(argv, "--rpc-race-timeout-ms", "3000") || "3000");
+  let hotReadClient = client;
+  let rpcRaceEnabled = false;
+  let rpcRaceLabels = [];
+
+  if (rpcRaceWanted) {
+    try {
+      hotReadClient = createRaceReadClient(config, {
+        labelsCsv: rpcRaceLabelsCsv,
+        timeoutMs: rpcRaceTimeoutMs,
+        logger
+      });
+      rpcRaceEnabled = true;
+      rpcRaceLabels = hotReadClient.labels;
+    } catch (error) {
+      logger.event("rpc_race_unavailable", {
+        labelsCsv: rpcRaceLabelsCsv,
+        message: shortErrorMessage(error)
+      });
+    }
+  }
 
   console.log(`${config.name} launch executor`);
   console.log(`Mode: ${send ? "SEND_ENABLED" : "DRY_RUN"}`);
   console.log(`Launch: ${config.launchTime}`);
   console.log(`Pool hook: ${poolKey[2]}`);
   console.log(`Run log: ${logger.outPath}`);
+  if (rpcRaceEnabled) {
+    console.log(`RPC race: ${rpcRaceLabels.join(", ")} (hot hook/quote/gas reads)`);
+  }
   logger.event("run_started", {
     mode: send ? "send" : "dry_run",
     preflightOnly,
     autoExit,
     fastLaunch,
+    rpcRaceWanted,
+    rpcRaceEnabled,
+    rpcRaceLabels,
+    rpcRaceTimeoutMs: rpcRaceEnabled ? rpcRaceTimeoutMs : null,
     cacheEnabled,
     cacheFile: cacheEnabled ? cache.file : null,
     configName: config.name,
@@ -724,7 +766,7 @@ export async function runLaunchExecutor({
   let choice;
   if (fastLaunch) {
     choice = await waitForFastLaunchChoice({
-      client,
+      client: hotReadClient,
       config,
       poolKey,
       execution,
@@ -737,11 +779,11 @@ export async function runLaunchExecutor({
       quoteFn
     });
   } else {
-    const started = await waitForLaunch({ client, config, poolKey, logger, argv, nowFn, sleepFn });
+    const started = await waitForLaunch({ client: hotReadClient, config, poolKey, logger, argv, nowFn, sleepFn });
     if (!started) throw new Error("Hook did not start before give-up window");
 
     choice = await chooseTierWithRetry({
-      client,
+      client: hotReadClient,
       config,
       poolKey,
       execution,
@@ -778,14 +820,14 @@ export async function runLaunchExecutor({
     argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "20000" : "12000")
   );
   const [gas, gasPrice, beforeTarget, beforeQuote] = await Promise.all([
-    client.estimateContractGas({
+    hotReadClient.estimateContractGas({
       account,
       address: config.addresses.infinityUniversalRouter,
       abi: universalRouterAbi,
       functionName: "execute",
       args: [tx.commands, tx.inputs, tx.deadline]
     }),
-    client.getGasPrice(),
+    hotReadClient.getGasPrice(),
     client.readContract({
       address: config.targetToken,
       abi: erc20Abi,

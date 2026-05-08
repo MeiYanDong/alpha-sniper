@@ -84,7 +84,7 @@ npm run share:launch -- --send --auto-exit --auto-approve-exit
 极速开盘模式：
 
 ```bash
-npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 这个模式仍然只走正规链上执行路线：自有 burner wallet、公开 BSC RPC、PancakeSwap quote、Universal Router gas simulation、签名交易、多 RPC 广播。它不做 mempool 攻击、sandwich、节点干扰或绕过平台规则。
@@ -92,6 +92,7 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-
 关键差异：
 
 - `--fast-launch`：hook 轮询和买入 quote 探测并行。
+- `--rpc-race`：热读路径用 Chainstack + Ankr 标准 BSC RPC 同时读 hook、quote、gas simulation 和 gas price，先返回可用结果者胜出；`--fast-launch` 默认会打开，可用 `--no-rpc-race` 关闭。公开 RPC 不进入热读 race。
 - `--quote-probe-lead-ms 10000`：开盘前最后 10 秒开始直接探测 quote，quote 成功且价格匹配就进入买入路径，不只等 hook poll。
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
 - `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
@@ -126,6 +127,7 @@ npm run share:approve -- --token target --send
 
 ```bash
 npm run test:scenarios
+npm run test:rpc-race
 npm run test:launch-sim
 npm run test:exit-sim
 npm run test:auto-flow-sim
@@ -153,6 +155,7 @@ npm run rpc:stress
 
 ```bash
 npm run test:scenarios
+npm run test:rpc-race
 npm run rpc:check
 npm run share:cache:warm
 npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 64,80,96 --max-failure-pct 1 --max-p95-ms 1000
@@ -166,6 +169,7 @@ npm run data:sample -- --count 12 --interval-ms 5000
 - `c=96` 明显坏：`25.15%` quota 失败。
 
 所以实盘极速轮询用 `100ms` 常规探测、最后 10 秒 `50ms` sprint，不把持续压力打到 `c=80+` 的坏档。
+热路径现在不是单 RPC fallback，而是 Chainstack 和 Ankr 标准 BSC RPC race；fallback 用来保可用性，race 用来压尾部延迟。
 
 ## 当前默认规则
 
@@ -185,6 +189,8 @@ npm run data:sample -- --count 12 --interval-ms 5000
 - start: `2026-05-08 18:00:00 Asia/Shanghai`
 
 我核对了 hook 已验证源码。这个 hook 的核心限制很直接：交易开始前 `beforeSwap` 会 `PoolNotStarted`，所以现在普通 Quoter 报价失败是正常的。到开始时间后，程序会重新跑报价探针，再看是否满足买入规则。
+
+2026-05-08 实盘复盘：程序在 `18:00:00.603` 观察到 hook started，`18:00:00.604` 拿到第一笔成功 quote，均价已经约 `0.740876`，因此按规则跳过。首个大额买单已经在开盘区块 `97068324` 内，`txIndex=1`，约 `600,000 USDT`，均价约 `0.4209`。这说明主要问题不是 `20U` 金额太小，而是“开盘后确认 quote 再发单”的架构天然晚于同区块抢跑资金；后续要进首区块，需要预构建交易、严格滑点和同一 raw tx 多 RPC 广播，而不是单纯加轮询频率。
 
 ## Binance / OKX API 的位置
 

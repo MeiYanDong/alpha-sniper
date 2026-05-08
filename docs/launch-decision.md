@@ -55,7 +55,7 @@ There is no "up to" sizing. The program can only buy exact `20 USDT`, exact `10 
 The active prewarm command now uses the speed-first route:
 
 ```bash
-npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+npm run share:launch -- --warmup-ms 600000 --fast-launch --rpc-race --rpc-race-labels chainstack-primary,ankr-bsc --rpc-race-timeout-ms 3000 --poll-ms 100 --sprint-ms 10000 --sprint-poll-ms 50 --quote-probe-lead-ms 10000 --gas-buffer-bps 12000 --gas-price-multiplier-bps 20000 --deadline-seconds 45 --send --multi-rpc-broadcast --broadcast-public --broadcast-timeout-ms 3000 --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
 ```
 
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
@@ -63,6 +63,31 @@ With `--auto-exit`, a successful buy does not end the process. The executor imme
 With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack, Ankr standard BSC RPC, and public BSC RPC. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
 
 With `--auto-approve-exit`, the launch executor estimates the sell approval amount from the buy quote and `minOut`. After the buy confirms, it uses the actual post-buy SHARE balance as the approval amount, sends missing ERC20-to-Permit2 and Permit2-to-UniversalRouter approvals immediately, then starts the exit watcher. Approval transactions use the same gas buffer and gas price multiplier as the launch command.
+
+With `--rpc-race`, the hot read path races Chainstack and Ankr standard BSC RPC for hook reads, exact-input quotes, Universal Router gas simulation, and gas price. Public RPC is deliberately excluded from the hot race. Wallet nonce, transaction receipt, balances, and final settlement reads remain on the normal client path.
+
+`--rpc-race` lowers read latency variance. It does not change the execution model: a transaction still has to be signed, broadcast, accepted by the network, and included by a validator.
+
+## 2026-05-08 postmortem
+
+Observed executor timing from the run log:
+
+- `18:00:00.603 Asia/Shanghai`: hook started observed.
+- `18:00:00.604 Asia/Shanghai`: first successful buy quote returned.
+- `18:00:00.606 Asia/Shanghai`: executor skipped because the quoted average price was already above the configured ceiling.
+
+Observed chain timing:
+
+- Launch block: `97068324`, timestamp `2026-05-08T10:00:00Z`.
+- Earliest SHARE buy was already inside the launch block at `txIndex=1`: about `600,000 USDT` in, about `1,425,603 SHARE` out, average price about `0.4209`.
+- More large orders in the same block pushed the price far above the configured buy zone before the executor's first successful post-open quote.
+
+Conclusion:
+
+- The program did the right thing by skipping; the quote was already too expensive.
+- The main failure cause was not that the configured `20U` amount was too small. Larger size would have made slippage worse.
+- The limiting architecture was post-open confirmation: `wait hook/quote -> decide -> sign/broadcast`. That route can react quickly after open, but it cannot beat transactions already included in the launch block.
+- To compete for first-block inclusion, the next architecture needs a prebuilt transaction near launch time, strict `minOut`/deadline protection, and same raw transaction multi-RPC broadcast. Hot RPC race still helps discovery, but it is not enough by itself.
 
 ## RPC boundary
 
@@ -76,6 +101,7 @@ Operational conclusion:
 - Do not run sustained monitoring in the `c=80+` bad range.
 - `100ms` baseline plus final `50ms` sprint is inside the measured stable envelope for this project.
 - If a future run shows `c=64` failing, lower `--sprint-poll-ms` pressure before launch.
+- Use RPC fallback for reliability and RPC race for latency-critical reads. Do not put public RPC in the hot race unless paid providers are unavailable.
 
 ## Current blocker
 
