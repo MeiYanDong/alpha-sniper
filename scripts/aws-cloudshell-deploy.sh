@@ -358,7 +358,7 @@ run_ssm_command() {
   local instance_id="$1"
   local command="$2"
   local comment="$3"
-  local command_id
+  local command_id result status
 
   command_id="$(aws ssm send-command \
     --region "$REGION" \
@@ -385,12 +385,26 @@ run_ssm_command() {
     sleep 5
   done
 
-  aws ssm get-command-invocation \
+  result="$(aws ssm get-command-invocation \
     --region "$REGION" \
     --command-id "$command_id" \
     --instance-id "$instance_id" \
     --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-    --output json
+    --output json)"
+
+  echo "$result"
+  status="$(jq -r '.Status' <<<"$result")"
+  [[ "$status" == "Success" ]]
+}
+
+wait_for_bootstrap() {
+  local instance_id="$1"
+  local command
+
+  command='for i in $(seq 1 90); do if [ -x /usr/local/bin/alpha-sniper-dry-run ] && [ -f /var/log/alpha-sniper-bootstrap.done ]; then echo "bootstrap ready"; exit 0; fi; sleep 10; done; echo "bootstrap timeout"; tail -n 200 /var/log/cloud-init-output.log || true; exit 1'
+
+  echo "Waiting for alpha-sniper bootstrap completion..."
+  run_ssm_command "$instance_id" "$command" "alpha-sniper bootstrap wait" >/dev/null
 }
 
 main() {
@@ -468,6 +482,7 @@ main() {
   echo "Launched EC2 instance: $instance_id"
   aws ec2 wait instance-running --region "$REGION" --instance-ids "$instance_id"
   wait_for_ssm "$instance_id"
+  wait_for_bootstrap "$instance_id"
 
   echo
   echo "Running remote dry-run validation..."
