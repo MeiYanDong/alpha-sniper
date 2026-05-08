@@ -86,14 +86,28 @@ function approvalsOk(allowance, amount) {
   );
 }
 
-async function ensureExitApproval({
+async function gasOverrides({ client, account, address, abi, functionName, args, gasBufferBps, gasPriceMultiplierBps }) {
+  if (!gasBufferBps || !gasPriceMultiplierBps) return {};
+  const [gas, gasPrice] = await Promise.all([
+    client.estimateContractGas({ account, address, abi, functionName, args }),
+    client.getGasPrice()
+  ]);
+  return {
+    gas: (gas * gasBufferBps) / 10_000n,
+    gasPrice: (gasPrice * gasPriceMultiplierBps) / 10_000n
+  };
+}
+
+export async function ensureExitApproval({
   client,
   walletClient,
   account,
   config,
   targetMeta,
   amount,
-  logger
+  logger,
+  gasBufferBps,
+  gasPriceMultiplierBps
 }) {
   const allowance = await readPermit2Allowance({
     client,
@@ -112,11 +126,22 @@ async function ensureExitApproval({
   });
 
   if (allowance.erc20Allowance < amount) {
+    const args = [config.addresses.permit2, amount];
     const hash = await walletClient.writeContract({
       address: config.targetToken,
       abi: erc20Abi,
       functionName: "approve",
-      args: [config.addresses.permit2, amount]
+      args,
+      ...(await gasOverrides({
+        client,
+        account,
+        address: config.targetToken,
+        abi: erc20Abi,
+        functionName: "approve",
+        args,
+        gasBufferBps,
+        gasPriceMultiplierBps
+      }))
     });
     console.log(`Exit ERC20 approve tx sent: ${hash}`);
     const receipt = await client.waitForTransactionReceipt({ hash });
@@ -128,11 +153,22 @@ async function ensureExitApproval({
     const maxUint48 = (1n << 48n) - 1n;
     const maxUint160 = (1n << 160n) - 1n;
     const permitAmount = amount > maxUint160 ? maxUint160 : amount;
+    const args = [config.targetToken, config.addresses.infinityUniversalRouter, permitAmount, maxUint48];
     const hash = await walletClient.writeContract({
       address: config.addresses.permit2,
       abi: permit2Abi,
       functionName: "approve",
-      args: [config.targetToken, config.addresses.infinityUniversalRouter, permitAmount, maxUint48]
+      args,
+      ...(await gasOverrides({
+        client,
+        account,
+        address: config.addresses.permit2,
+        abi: permit2Abi,
+        functionName: "approve",
+        args,
+        gasBufferBps,
+        gasPriceMultiplierBps
+      }))
     });
     console.log(`Exit Permit2 approve tx sent: ${hash}`);
     const receipt = await client.waitForTransactionReceipt({ hash });
@@ -373,7 +409,9 @@ export async function runExitWatcher({
         config,
         targetMeta,
         amount: targetBalance,
-        logger
+        logger,
+        gasBufferBps,
+        gasPriceMultiplierBps
       });
       if (!approvalsOk(allowance, sellAmount)) {
         return { action: "SKIP", reason: "APPROVAL_MISSING_AFTER_APPROVE" };

@@ -16,7 +16,8 @@ import { loadConfigFromArgs, sameAddress } from "./config.js";
 import { getExecutionConfig } from "./decision.js";
 import { applySlippageBps, buildInfinityExactInputSingleExecute } from "./infinity-swap.js";
 import { fmtDecimal, toDecimalAmount } from "./math.js";
-import { runExitWatcher } from "./exit-watch.js";
+import { createProjectCache, getCachedPoolKey, getCachedTokenMeta } from "./project-cache.js";
+import { ensureExitApproval, runExitWatcher } from "./exit-watch.js";
 import {
   createBscClient,
   getTokenMeta,
@@ -646,15 +647,40 @@ export async function runLaunchExecutor({
   const preflightOnly = hasFlag("--preflight-only", argv);
   const autoExit = hasFlag("--auto-exit", argv);
   const fastLaunch = hasFlag("--fast-launch", argv);
+  const cacheEnabled = !hasFlag("--no-cache", argv) && getTokenMetaFn === getTokenMeta;
+  const cache = createProjectCache(config, { enabled: cacheEnabled });
   const [targetMeta, quoteMeta, poolKey] = await Promise.all([
-    getTokenMetaFn(client, config.targetToken),
-    getTokenMetaFn(client, config.quoteToken),
-    client.readContract({
-      address: config.addresses.infinityCLPoolManager,
-      abi: infinityCLPoolManagerAbi,
-      functionName: "poolIdToPoolKey",
-      args: [config.protocols.infinityCL.poolId]
-    })
+    cacheEnabled
+      ? getCachedTokenMeta({
+          cache,
+          address: config.targetToken,
+          load: () => getTokenMetaFn(client, config.targetToken)
+        })
+      : getTokenMetaFn(client, config.targetToken),
+    cacheEnabled
+      ? getCachedTokenMeta({
+          cache,
+          address: config.quoteToken,
+          load: () => getTokenMetaFn(client, config.quoteToken)
+        })
+      : getTokenMetaFn(client, config.quoteToken),
+    cacheEnabled
+      ? getCachedPoolKey({
+          cache,
+          load: () =>
+            client.readContract({
+              address: config.addresses.infinityCLPoolManager,
+              abi: infinityCLPoolManagerAbi,
+              functionName: "poolIdToPoolKey",
+              args: [config.protocols.infinityCL.poolId]
+            })
+        })
+      : client.readContract({
+          address: config.addresses.infinityCLPoolManager,
+          abi: infinityCLPoolManagerAbi,
+          functionName: "poolIdToPoolKey",
+          args: [config.protocols.infinityCL.poolId]
+        })
   ]);
 
   console.log(`${config.name} launch executor`);
@@ -667,6 +693,8 @@ export async function runLaunchExecutor({
     preflightOnly,
     autoExit,
     fastLaunch,
+    cacheEnabled,
+    cacheFile: cacheEnabled ? cache.file : null,
     configName: config.name,
     launchTime: config.launchTime,
     wallet: account.address,
@@ -784,6 +812,16 @@ export async function runLaunchExecutor({
   console.log(
     `Decision: BUY ${chosen.tier.amountInUsdt} ${quoteMeta.symbol}, tier ${chosen.tier.name}, avg ${fmtDecimal(chosen.avg, 8)}, minOut ${fmtDecimal(toDecimalAmount(minOut, targetMeta.decimals), 8)} ${targetMeta.symbol}`
   );
+  if (autoExit && hasFlag("--auto-approve-exit", argv)) {
+    console.log(
+      `Exit approval estimate: quote ${fmtDecimal(toDecimalAmount(chosen.amountOut, targetMeta.decimals), 8)} ${targetMeta.symbol}, min ${fmtDecimal(toDecimalAmount(minOut, targetMeta.decimals), 8)} ${targetMeta.symbol}; actual post-buy balance will be approved.`
+    );
+    logger.event("exit_approval_estimate", {
+      quotedTargetAmount: chosen.amountOut,
+      minTargetAmount: minOut,
+      targetSymbol: targetMeta.symbol
+    });
+  }
   console.log(`Simulation: ok, gas ${gas.toString()}, bufferedGas ${bufferedGas.toString()}, gasPrice ${boostedGasPrice.toString()}`);
   logger.event("simulation_ok", {
     tier: chosen.tier.name,
@@ -869,6 +907,24 @@ export async function runLaunchExecutor({
 
   let exitResult = null;
   if (autoExit && receipt.status === "success") {
+    if (hasFlag("--auto-approve-exit", argv) && afterTarget > 0n) {
+      console.log(
+        `Auto exit approval: approving actual ${fmtDecimal(toDecimalAmount(afterTarget, targetMeta.decimals), 8)} ${targetMeta.symbol} balance before exit watch.`
+      );
+      logger.event("auto_exit_approval_starting", { amount: afterTarget });
+      await ensureExitApproval({
+        client,
+        walletClient,
+        account,
+        config,
+        targetMeta,
+        amount: afterTarget,
+        logger,
+        gasBufferBps,
+        gasPriceMultiplierBps
+      });
+      logger.event("auto_exit_approval_finished", { amount: afterTarget });
+    }
     logger.event("auto_exit_starting", { entryAvgPriceUsd: chosen.avg?.toString() });
     exitResult = await runExitWatcher({
       config,

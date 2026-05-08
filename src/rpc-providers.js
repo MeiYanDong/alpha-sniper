@@ -14,6 +14,7 @@ export function getSafeRpcProviders(config, { includePublic = true } = {}) {
 
   pushUnique(providers, { label: "chainstack-primary", url: process.env.BSC_RPC_URL, skipPublic });
   pushUnique(providers, { label: "chainstack-alias", url: process.env.CHAINSTACK_BSC_RPC_URL, skipPublic });
+  pushUnique(providers, { label: "ankr-bsc", url: process.env.ANKR_BSC_RPC_URL, skipPublic });
   if (includePublic) pushUnique(providers, { label: "public-bsc", url: PUBLIC_BSC_RPC_URL });
 
   for (const [index, url] of (config.rpcUrls || []).entries()) {

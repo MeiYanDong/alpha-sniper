@@ -36,9 +36,10 @@ There is no "up to" sizing. The program can only buy exact `20 USDT`, exact `10 
 ## Pre-launch checklist
 
 - `npm run share:ready` passes spend and approval checks.
+- `npm run share:cache:warm` warms static token metadata and poolKey cache.
 - `npm run share:launch -- --preflight-only` passes without waiting for launch.
 - USDT is approved to Permit2 before launch.
-- RPC stress test passes on Chainstack.
+- RPC stress test passes on Chainstack and Ankr standard BSC RPC.
 - Swap execution path is implemented and dry-run reaches the expected hook gate before launch.
 - Launch execution writes JSONL evidence to `data/runs/*.jsonl`.
 
@@ -59,7 +60,9 @@ npm run share:launch -- --warmup-ms 600000 --fast-launch --poll-ms 100 --sprint-
 
 With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
 
-With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack plus public BSC RPC. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
+With `--multi-rpc-broadcast --broadcast-public`, the buy transaction is signed once and the same raw transaction is broadcast to Chainstack, Ankr standard BSC RPC, and public BSC RPC. This is only a propagation-speed optimization for the user's own wallet transaction; it does not do mempool attacks, sandwiching, node abuse, or any attempt to interfere with other users.
+
+With `--auto-approve-exit`, the launch executor estimates the sell approval amount from the buy quote and `minOut`. After the buy confirms, it uses the actual post-buy SHARE balance as the approval amount, sends missing ERC20-to-Permit2 and Permit2-to-UniversalRouter approvals immediately, then starts the exit watcher. Approval transactions use the same gas buffer and gas price multiplier as the launch command.
 
 ## RPC boundary
 

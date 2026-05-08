@@ -9,6 +9,8 @@ const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a
 
 const CHECKS = [
   "ANKR_MULTICHAIN_RPC_URL",
+  "ANKR_BSC_RPC_URL",
+  "ANKR_BSC_WS_URL",
   "BSC_RPC_URL",
   "CHAINSTACK_BSC_RPC_URL",
   "CHAINSTACK_API_KEY"
@@ -149,6 +151,7 @@ async function main() {
     "Chainstack/BSC standard RPC",
     await safeStandardRpcCheck(process.env.BSC_RPC_URL || process.env.CHAINSTACK_BSC_RPC_URL)
   );
+  printRpcResult("Ankr BSC standard RPC", await safeStandardRpcCheck(process.env.ANKR_BSC_RPC_URL));
   console.log(`- Ankr getTransactionsByAddress: ${await checkAnkr()}`);
   printRpcResult("Public BSC fallback", await safeStandardRpcCheck(PUBLIC_BSC_RPC_URL));
 }

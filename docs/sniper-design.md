@@ -29,8 +29,10 @@ RPC 选择按角色分工：
 - 公开 BSC RPC：只作为最后 fallback，不作为开盘监控主路线。
 
 本项目会自动读取 `~/.codex/secrets/evm-rpc-providers.env`，不把 provider URL 写进代码、README 或前端。
-运行时 viem client 使用多 RPC fallback：`BSC_RPC_URL` -> `CHAINSTACK_BSC_RPC_URL` -> 公开 BSC fallback。
-极速买入发送时可以开启 `--multi-rpc-broadcast`：本地 burner wallet 只签名一次，把同一笔 raw transaction 广播到多个 RPC，提高传播成功率。它不改变 nonce，不发多笔不同交易，也不做 mempool 攻击或夹子交易。
+运行时 viem client 使用多 RPC fallback：`BSC_RPC_URL` -> `CHAINSTACK_BSC_RPC_URL` -> `ANKR_BSC_RPC_URL` -> 公开 BSC fallback。
+极速买入发送时可以开启 `--multi-rpc-broadcast`：本地 burner wallet 只签名一次，把同一笔 raw transaction 广播到多个 RPC，提高传播成功率。当前标准 RPC 广播路径包括 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；Ankr Advanced API 仍用于钱包交易发现，不用于替代标准 `eth_sendRawTransaction`。它不改变 nonce，不发多笔不同交易，也不做 mempool 攻击或夹子交易。
+
+项目缓存只缓存静态信息：token metadata 和 Infinity poolKey。动态价格、quote、hook started、余额、授权、gas 不缓存，所有交易决策都读实时链上结果。
 
 状态监控默认不扫大范围 `Initialize` 日志。原因是当前池的 `poolIdToPoolKey` 已经可读，直接读取 poolKey、slot0、liquidity 和 hook 状态更快、更稳定。只有 `poolIdToPoolKey` 不可用时，才考虑打开 `scanInitializeLogs` 做日志回溯。
 

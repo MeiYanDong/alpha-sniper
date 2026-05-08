@@ -26,7 +26,12 @@ function unique(values) {
 
 function selectRpcUrls(config) {
   if (config.rpcUrlEnv === "BSC_RPC_URL") {
-    return unique([process.env.BSC_RPC_URL, process.env.CHAINSTACK_BSC_RPC_URL, config.defaultRpcUrl]);
+    return unique([
+      process.env.BSC_RPC_URL,
+      process.env.CHAINSTACK_BSC_RPC_URL,
+      process.env.ANKR_BSC_RPC_URL,
+      config.defaultRpcUrl
+    ]);
   }
 
   return unique([process.env[config.rpcUrlEnv], config.defaultRpcUrl]);

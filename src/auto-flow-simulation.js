@@ -40,17 +40,19 @@ function createMockClient(config) {
     quoteBalance: parseUnits("20.59401315", 18),
     targetBalance: 0n,
     quoteAllowance: parseUnits("20", 18),
-    targetAllowance: parseUnits("100", 18),
+    targetAllowance: 0n,
     quotePermit2: parseUnits("20", 18),
-    targetPermit2: parseUnits("100", 18),
+    targetPermit2: 0n,
     bnbBalance: parseUnits("0.0014690241", 18),
     gas: 195_000n,
     gasPrice: parseUnits("0.05", 9),
+    executeCalls: 0,
     writeCalls: 0,
     lastTxType: null
   };
 
   return {
+    config,
     state,
     async readContract({ address, functionName, args }) {
       if (functionName === "poolIdToPoolKey") return poolKey;
@@ -104,8 +106,26 @@ function createMockClient(config) {
 
 function createWalletClient(client) {
   return {
-    async writeContract() {
+    async writeContract({ address, functionName, args }) {
       client.state.writeCalls += 1;
+      if (functionName === "approve" && address.toLowerCase() === client.config.targetToken.toLowerCase()) {
+        client.state.targetAllowance = args[1];
+        client.state.lastTxType = "approve";
+        return `0xauto${String(client.state.writeCalls).padEnd(59, "0")}`;
+      }
+      if (functionName === "approve" && address.toLowerCase() === client.config.addresses.permit2.toLowerCase()) {
+        client.state.targetPermit2 = args[2];
+        client.state.lastTxType = "approve";
+        return `0xauto${String(client.state.writeCalls).padEnd(59, "0")}`;
+      }
+      if (
+        functionName === "execute" &&
+        address.toLowerCase() === client.config.addresses.infinityUniversalRouter.toLowerCase()
+      ) {
+        client.state.executeCalls += 1;
+        client.state.lastTxType = client.state.executeCalls === 1 ? "buy" : "sell";
+        return `0xauto${String(client.state.writeCalls).padEnd(59, "0")}`;
+      }
       client.state.lastTxType = client.state.writeCalls === 1 ? "buy" : "sell";
       return `0xauto${String(client.state.writeCalls).padEnd(59, "0")}`;
     }
@@ -144,6 +164,7 @@ async function main() {
       "config/share.json",
       "--send",
       "--auto-exit",
+      "--auto-approve-exit",
       "--exit-once",
       "--warmup-ms",
       "0",
@@ -169,7 +190,8 @@ async function main() {
   assert.equal(result.amountInUsdt, "20");
   assert.equal(result.exitResult?.action, "SELL_EXACT_IN");
   assert.equal(result.exitResult?.reason, "TAKE_PROFIT_FULL_EXIT");
-  assert.equal(client.state.writeCalls, 2);
+  assert.equal(client.state.writeCalls, 4);
+  assert.equal(client.state.executeCalls, 2);
 
   console.log("Auto flow simulation: ok");
   console.log(`Buy: ${result.action} ${result.amountInUsdt} USDT at avg ${result.avg}`);
