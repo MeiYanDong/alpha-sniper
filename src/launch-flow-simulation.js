@@ -115,6 +115,21 @@ const scenarios = [
       }
     ],
     expected: { action: "BUY_EXACT_IN", amountInUsdt: "10", tier: "acceptable", sent: true }
+  },
+  {
+    id: "S16",
+    name: "极速模式下 quote 先恢复，hook 轮询未确认也会触发买入",
+    fastLaunch: true,
+    hookStarted: false,
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.33" } } }],
+    expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true }
+  },
+  {
+    id: "S17",
+    name: "多 RPC 广播路径签名一次后向多个 RPC 发送同一笔 raw tx",
+    multiRpcBroadcast: true,
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true, writeCalls: 0, broadcastCalls: 1 }
   }
 ];
 
@@ -223,6 +238,9 @@ function createMockClient({ config, scenario }) {
         gasUsed: gas,
         effectiveGasPrice: gasPrice
       };
+    },
+    async getTransactionCount() {
+      return 7;
     }
   };
 }
@@ -245,6 +263,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
     gasOk: true,
     quoteCalls: 0,
     writeCalls: 0,
+    broadcastCalls: 0,
     tiersPerAttempt: baseConfig.execution.autoBuyTiers.length,
     ...rawScenario
   };
@@ -267,11 +286,23 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
     "--give-up-ms-after-launch",
     "600"
   ];
+  if (scenario.fastLaunch) {
+    argv.push("--fast-launch", "--sprint-ms", "600", "--sprint-poll-ms", "50", "--quote-probe-lead-ms", "600");
+  }
+  if (scenario.multiRpcBroadcast) {
+    argv.push("--multi-rpc-broadcast", "--broadcast-public", "--broadcast-labels", "public-bsc");
+  }
+  const account = {
+    address: SIM_ACCOUNT,
+    async signTransaction() {
+      return `0x${"f".repeat(128)}`;
+    }
+  };
 
   try {
     const result = await runLaunchExecutor({
       config,
-      account: { address: SIM_ACCOUNT },
+      account,
       client: createMockClient({ config, scenario }),
       walletClient: createMockWalletClient(scenario),
       logger,
@@ -284,9 +315,13 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
         decimals: 18,
         totalSupply: 0n
       }),
-      quoteFn: createQuoteFn(scenario)
+      quoteFn: createQuoteFn(scenario),
+      broadcastRawTransactionFn: async () => {
+        scenario.broadcastCalls += 1;
+        return `0x${scenario.id.toLowerCase().padEnd(64, "b")}`;
+      }
     });
-    return { ...result, events: logger.events, writeCalls: scenario.writeCalls };
+    return { ...result, events: logger.events, writeCalls: scenario.writeCalls, broadcastCalls: scenario.broadcastCalls };
   } catch (error) {
     const message = error.shortMessage || error.message || String(error);
     const reason =
@@ -302,13 +337,19 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
                 ? "BNB_GAS_TOO_LOW"
                 : message;
     const action = reason === "HOOK_NOT_STARTED" ? "WAIT" : "SKIP";
-    return { action, reason, events: logger.events, writeCalls: scenario.writeCalls };
+    return { action, reason, events: logger.events, writeCalls: scenario.writeCalls, broadcastCalls: scenario.broadcastCalls };
   }
 }
 
 function assertExpected(scenario, result) {
   for (const [key, value] of Object.entries(scenario.expected)) {
-    assert.equal(result[key], value, `${scenario.id} ${key}`);
+    assert.equal(
+      result[key],
+      value,
+      `${scenario.id} ${key}: ${JSON.stringify(result, (_key, current) =>
+        typeof current === "bigint" ? current.toString() : current
+      )}`
+    );
   }
 }
 
@@ -319,9 +360,19 @@ async function main() {
     const result = await runActualExecutorScenario({ baseConfig, rawScenario: scenario });
     assertExpected(scenario, result);
     if (result.action === "BUY_EXACT_IN") {
-      assert.equal(result.writeCalls, 1, `${scenario.id} should trigger fake writeContract once`);
+      assert.equal(
+        result.writeCalls,
+        scenario.expected.writeCalls ?? 1,
+        `${scenario.id} should trigger expected fake writeContract calls`
+      );
+      assert.equal(
+        result.broadcastCalls,
+        scenario.expected.broadcastCalls ?? 0,
+        `${scenario.id} should trigger expected fake raw broadcasts`
+      );
     } else {
       assert.equal(result.writeCalls, 0, `${scenario.id} should not trigger fake writeContract`);
+      assert.equal(result.broadcastCalls, 0, `${scenario.id} should not trigger fake raw broadcast`);
     }
     results.push({ scenario, result });
   }

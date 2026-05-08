@@ -23,6 +23,12 @@ import {
   quoteInfinityCLExactInputSingle,
   summarizeContractError
 } from "./pools.js";
+import {
+  classifyRpcError,
+  filterRpcProviders,
+  getSafeRpcProviders,
+  rawRpcCall
+} from "./rpc-providers.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const INCLUSIVE_PRICE_EPSILON = new Decimal("0.000000000001");
@@ -233,7 +239,8 @@ async function chooseTier({
   execution,
   quoteMeta,
   targetMeta,
-  quoteFn = quoteInfinityCLExactInputSingle
+  quoteFn = quoteInfinityCLExactInputSingle,
+  logQuotes = true
 }) {
   const zeroForOne = sameAddress(poolKey[0], config.quoteToken);
   const tiers = sortedTiers(execution);
@@ -265,15 +272,9 @@ async function chooseTier({
 
   let sawQuoteOk = false;
   for (const result of quoted) {
-    if (!result.ok) {
-      console.log(`Tier ${result.tier.name}: quote failed ${result.error.shortMessage}`);
-      continue;
-    }
-    sawQuoteOk = true;
-    console.log(
-      `Tier ${result.tier.name}: ${result.tier.amountInUsdt} ${quoteMeta.symbol} -> ${fmtDecimal(toDecimalAmount(result.amountOut, targetMeta.decimals), 8)} ${targetMeta.symbol}, avg ${fmtDecimal(result.avg, 8)}, quoteGas ${result.quoteGas.toString()}, latency ${result.latencyMs.toFixed(0)}ms`
-    );
+    if (result.ok) sawQuoteOk = true;
   }
+  if (logQuotes) printQuoteResults({ quoted, quoteMeta, targetMeta });
 
   for (const result of quoted) {
     if (result.ok && tierMatchesAvg(result.avg, result.tier)) {
@@ -282,6 +283,18 @@ async function chooseTier({
   }
 
   return { match: null, sawQuoteOk, quotes: quoted };
+}
+
+function printQuoteResults({ quoted, quoteMeta, targetMeta }) {
+  for (const result of quoted) {
+    if (!result.ok) {
+      console.log(`Tier ${result.tier.name}: quote failed ${result.error.shortMessage}`);
+      continue;
+    }
+    console.log(
+      `Tier ${result.tier.name}: ${result.tier.amountInUsdt} ${quoteMeta.symbol} -> ${fmtDecimal(toDecimalAmount(result.amountOut, targetMeta.decimals), 8)} ${targetMeta.symbol}, avg ${fmtDecimal(result.avg, 8)}, quoteGas ${result.quoteGas.toString()}, latency ${result.latencyMs.toFixed(0)}ms`
+    );
+  }
 }
 
 async function chooseTierWithRetry({
@@ -358,6 +371,261 @@ async function chooseTierWithRetry({
   };
 }
 
+function quoteAttemptPayload(result) {
+  return result.quotes.map((item) =>
+    item.ok
+      ? {
+          tier: item.tier.name,
+          amountInUsdt: item.tier.amountInUsdt,
+          amountOut: item.amountOut,
+          avg: item.avg?.toString(),
+          quoteGas: item.quoteGas,
+          latencyMs: Math.round(item.latencyMs),
+          matched: tierMatchesAvg(item.avg, item.tier)
+        }
+      : {
+          tier: item.tier.name,
+          amountInUsdt: item.tier.amountInUsdt,
+          error: item.error
+        }
+  );
+}
+
+async function waitForFastLaunchChoice({
+  client,
+  config,
+  poolKey,
+  execution,
+  quoteMeta,
+  targetMeta,
+  logger,
+  argv = process.argv,
+  nowFn = Date.now,
+  sleepFn = sleep,
+  quoteFn = quoteInfinityCLExactInputSingle
+}) {
+  const launchAt = new Date(config.launchTime).getTime();
+  const warmupMs = Number(argValueFrom(argv, "--warmup-ms", "600000"));
+  const pollMs = Number(argValueFrom(argv, "--poll-ms", "100"));
+  const slowPollMs = Number(argValueFrom(argv, "--slow-poll-ms", "5000"));
+  const sprintMs = Number(argValueFrom(argv, "--sprint-ms", "10000"));
+  const sprintPollMs = Number(argValueFrom(argv, "--sprint-poll-ms", "50"));
+  const quoteProbeLeadMs = Number(argValueFrom(argv, "--quote-probe-lead-ms", String(sprintMs)));
+  const deadline = Number(argValueFrom(argv, "--give-up-ms-after-launch", "30000"));
+  const poolId = config.protocols.infinityCL.poolId;
+  const hook = poolKey[2];
+  const giveUpAt = launchAt + deadline;
+  let attempts = 0;
+  let polls = 0;
+  let sawAnyQuoteOk = false;
+  let hookStarted = false;
+
+  while (nowFn() < launchAt - warmupMs) {
+    const remainingMs = launchAt - nowFn();
+    console.log(`Fast prewarm pending: launch in ${Math.ceil(remainingMs / 1000)}s`);
+    await sleepFn(Math.min(slowPollMs, Math.max(1000, remainingMs - warmupMs)));
+  }
+
+  console.log(
+    `Fast prewarm active: hook ${pollMs}ms, sprint ${sprintPollMs}ms in last ${sprintMs}ms, quote probe lead ${quoteProbeLeadMs}ms`
+  );
+  logger.event("fast_prewarm_active", {
+    pollMs,
+    sprintMs,
+    sprintPollMs,
+    quoteProbeLeadMs,
+    launchAt: new Date(launchAt).toISOString()
+  });
+
+  while (nowFn() <= giveUpAt) {
+    attempts += 1;
+    const loopStartedAt = performance.now();
+    const loopNow = nowFn();
+    const intervalMs = loopNow >= launchAt - sprintMs ? sprintPollMs : pollMs;
+    const quoteEnabled = hookStarted || loopNow >= launchAt - quoteProbeLeadMs;
+
+    polls += 1;
+    const hookPromise = isPoolStarted(client, hook, poolId);
+    const quotePromise = quoteEnabled
+      ? chooseTier({
+          client,
+          config,
+          poolKey,
+          execution,
+          quoteMeta,
+          targetMeta,
+          quoteFn,
+          logQuotes: false
+        })
+      : null;
+
+    const [hookResult, quoteResult] = await Promise.allSettled([
+      hookPromise,
+      quotePromise ?? Promise.resolve(null)
+    ]);
+
+    if (hookResult.status === "fulfilled" && hookResult.value) {
+      if (!hookStarted) {
+        logger.event("hook_started", {
+          polls,
+          msFromLaunch: nowFn() - launchAt,
+          pollLatencyMs: Math.round(performance.now() - loopStartedAt)
+        });
+      }
+      hookStarted = true;
+    } else if (hookResult.status === "rejected") {
+      const summary = summarizeContractError(hookResult.reason);
+      logger.event("hook_poll_failed", { message: summary.shortMessage, signature: summary.signature });
+    }
+
+    if (quoteResult.status === "fulfilled" && quoteResult.value) {
+      const result = quoteResult.value;
+      sawAnyQuoteOk ||= result.sawQuoteOk;
+      logger.event("fast_quote_probe", {
+        attempts,
+        hookStarted,
+        intervalMs,
+        latencyMs: Math.round(performance.now() - loopStartedAt),
+        sawQuoteOk: result.sawQuoteOk,
+        quotes: quoteAttemptPayload(result)
+      });
+
+      if (result.match) {
+        printQuoteResults({ quoted: result.quotes, quoteMeta, targetMeta });
+        logger.event("launch_triggered", {
+          signal: hookStarted ? "hook_or_quote_match" : "quote_match",
+          attempts,
+          msFromLaunch: nowFn() - launchAt
+        });
+        return { match: result.match, reason: null, sawAnyQuoteOk, signal: "quote_match" };
+      }
+
+      if (result.sawQuoteOk) {
+        printQuoteResults({ quoted: result.quotes, quoteMeta, targetMeta });
+        return {
+          match: null,
+          reason: "NO_AUTO_BUY_TIER_MATCHED",
+          sawAnyQuoteOk,
+          signal: "quote_ok_no_match"
+        };
+      }
+    } else if (quoteResult.status === "rejected") {
+      const summary = summarizeContractError(quoteResult.reason);
+      logger.event("fast_quote_probe_failed", {
+        attempts,
+        hookStarted,
+        message: summary.shortMessage,
+        signature: summary.signature
+      });
+    }
+
+    await sleepFn(Math.max(0, intervalMs - Math.round(performance.now() - loopStartedAt)));
+  }
+
+  logger.event("fast_give_up", {
+    attempts,
+    polls,
+    hookStarted,
+    sawAnyQuoteOk,
+    giveUpAt: new Date(giveUpAt).toISOString()
+  });
+  return {
+    match: null,
+    reason: hookStarted || sawAnyQuoteOk ? "QUOTE_FAILED" : "HOOK_NOT_STARTED",
+    sawAnyQuoteOk,
+    signal: null
+  };
+}
+
+async function broadcastRawTransaction({ provider, serializedTransaction, timeoutMs }) {
+  return rawRpcCall(provider.url, "eth_sendRawTransaction", [serializedTransaction], { timeoutMs });
+}
+
+async function sendBuyTransaction({
+  config,
+  account,
+  client,
+  walletClient,
+  tx,
+  gas,
+  gasPrice,
+  argv,
+  logger,
+  broadcastRawTransactionFn = broadcastRawTransaction
+}) {
+  const multiRpcBroadcast = hasFlag("--multi-rpc-broadcast", argv);
+  if (!multiRpcBroadcast) {
+    return walletClient.writeContract({
+      address: config.addresses.infinityUniversalRouter,
+      abi: universalRouterAbi,
+      functionName: "execute",
+      args: [tx.commands, tx.inputs, tx.deadline],
+      gas,
+      gasPrice
+    });
+  }
+
+  if (typeof account.signTransaction !== "function") {
+    throw new Error("Multi RPC broadcast requires a local account that can sign raw transactions");
+  }
+
+  const includePublic = hasFlag("--broadcast-public", argv);
+  const labelsCsv = argValueFrom(argv, "--broadcast-labels", "");
+  const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
+  const providers = filterRpcProviders(getSafeRpcProviders(config, { includePublic }), labelsCsv);
+  if (providers.length === 0) throw new Error("No RPC providers available for multi RPC broadcast");
+
+  const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
+  const serializedTransaction = await account.signTransaction({
+    chainId: Number(config.chainId || bsc.id),
+    nonce,
+    to: config.addresses.infinityUniversalRouter,
+    data: tx.calldata,
+    gas,
+    gasPrice,
+    value: 0n,
+    type: "legacy"
+  });
+
+  const startedAt = performance.now();
+  const results = await Promise.all(
+    providers.map(async (provider) => {
+      try {
+        const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
+        return { ok: true, label: provider.label, hash };
+      } catch (error) {
+        return {
+          ok: false,
+          label: provider.label,
+          errorType: classifyRpcError(error),
+          message: error.shortMessage || error.message || String(error)
+        };
+      }
+    })
+  );
+  const success = results.find((result) => result.ok);
+  logger.event("multi_rpc_broadcast", {
+    latencyMs: Math.round(performance.now() - startedAt),
+    providers: results.map((result) =>
+      result.ok
+        ? { label: result.label, ok: true, hash: result.hash }
+        : { label: result.label, ok: false, errorType: result.errorType }
+    )
+  });
+
+  if (!success) {
+    throw new Error(
+      `Multi RPC broadcast failed: ${results
+        .map((result) => `${result.label}:${result.errorType || "unknown"}`)
+        .join(", ")}`
+    );
+  }
+
+  const okCount = results.filter((result) => result.ok).length;
+  console.log(`Buy tx broadcast: ${success.hash} via ${success.label}, ok=${okCount}/${results.length}`);
+  return success.hash;
+}
+
 export async function runLaunchExecutor({
   config,
   account,
@@ -368,7 +636,8 @@ export async function runLaunchExecutor({
   nowFn = Date.now,
   sleepFn = sleep,
   getTokenMetaFn = getTokenMeta,
-  quoteFn = quoteInfinityCLExactInputSingle
+  quoteFn = quoteInfinityCLExactInputSingle,
+  broadcastRawTransactionFn = broadcastRawTransaction
 }) {
   const execution = getExecutionConfig(config);
   activeLogger = logger;
@@ -376,6 +645,7 @@ export async function runLaunchExecutor({
   const send = hasFlag("--send", argv);
   const preflightOnly = hasFlag("--preflight-only", argv);
   const autoExit = hasFlag("--auto-exit", argv);
+  const fastLaunch = hasFlag("--fast-launch", argv);
   const [targetMeta, quoteMeta, poolKey] = await Promise.all([
     getTokenMetaFn(client, config.targetToken),
     getTokenMetaFn(client, config.quoteToken),
@@ -396,6 +666,7 @@ export async function runLaunchExecutor({
     mode: send ? "send" : "dry_run",
     preflightOnly,
     autoExit,
+    fastLaunch,
     configName: config.name,
     launchTime: config.launchTime,
     wallet: account.address,
@@ -422,22 +693,39 @@ export async function runLaunchExecutor({
     return { action: "PREFLIGHT_ONLY", reason: "PREFLIGHT_OK" };
   }
 
-  const started = await waitForLaunch({ client, config, poolKey, logger, argv, nowFn, sleepFn });
-  if (!started) throw new Error("Hook did not start before give-up window");
+  let choice;
+  if (fastLaunch) {
+    choice = await waitForFastLaunchChoice({
+      client,
+      config,
+      poolKey,
+      execution,
+      quoteMeta,
+      targetMeta,
+      logger,
+      argv,
+      nowFn,
+      sleepFn,
+      quoteFn
+    });
+  } else {
+    const started = await waitForLaunch({ client, config, poolKey, logger, argv, nowFn, sleepFn });
+    if (!started) throw new Error("Hook did not start before give-up window");
 
-  const choice = await chooseTierWithRetry({
-    client,
-    config,
-    poolKey,
-    execution,
-    quoteMeta,
-    targetMeta,
-    logger,
-    argv,
-    nowFn,
-    sleepFn,
-    quoteFn
-  });
+    choice = await chooseTierWithRetry({
+      client,
+      config,
+      poolKey,
+      execution,
+      quoteMeta,
+      targetMeta,
+      logger,
+      argv,
+      nowFn,
+      sleepFn,
+      quoteFn
+    });
+  }
   const chosen = choice.match;
   if (!chosen) {
     console.log(`Decision: SKIP - ${choice.reason}.`);
@@ -458,7 +746,9 @@ export async function runLaunchExecutor({
   });
 
   const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
-  const gasPriceMultiplierBps = BigInt(argValueFrom(argv, "--gas-price-multiplier-bps", "12000"));
+  const gasPriceMultiplierBps = BigInt(
+    argValueFrom(argv, "--gas-price-multiplier-bps", fastLaunch ? "15000" : "12000")
+  );
   const [gas, gasPrice, beforeTarget, beforeQuote] = await Promise.all([
     client.estimateContractGas({
       account,
@@ -525,13 +815,17 @@ export async function runLaunchExecutor({
   }
 
   const sentAt = nowFn();
-  const hash = await walletClient.writeContract({
-    address: config.addresses.infinityUniversalRouter,
-    abi: universalRouterAbi,
-    functionName: "execute",
-    args: [tx.commands, tx.inputs, tx.deadline],
+  const hash = await sendBuyTransaction({
+    config,
+    account,
+    client,
+    walletClient,
+    tx,
     gas: bufferedGas,
-    gasPrice: boostedGasPrice
+    gasPrice: boostedGasPrice,
+    argv,
+    logger,
+    broadcastRawTransactionFn
   });
   console.log(`Buy tx sent: ${hash}`);
   logger.event("tx_sent", { hash, sentAt: new Date(sentAt).toISOString() });
