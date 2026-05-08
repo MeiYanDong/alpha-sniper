@@ -64,6 +64,20 @@ npm run share:launch -- --send
 npm run share:sell:ready
 ```
 
+买入后自动卖出监控：
+
+```bash
+npm run share:exit:watch -- --entry-avg-price 0.34 --send
+```
+
+开盘买入并在买入成功后继续自动监控卖出：
+
+```bash
+npm run share:launch -- --send --auto-exit --auto-approve-exit
+```
+
+`--auto-exit` 会在买入成功后继续运行 exit watcher。默认卖出规则：买入均价下跌 15% 全卖；上涨 50% 卖一半；上涨 100% 全卖剩余。每次卖出前都必须通过卖出报价和 Universal Router simulation。`--auto-approve-exit` 只在买入后发现 SHARE 卖出授权缺失时，给 burner 钱包当前 SHARE 余额补授权。
+
 通用真实买/卖测试走同一个 Infinity Universal Router 路径：
 
 ```bash
@@ -93,11 +107,15 @@ npm run share:approve -- --token target --send
 ```bash
 npm run test:scenarios
 npm run test:launch-sim
+npm run test:exit-sim
+npm run test:auto-flow-sim
 ```
 
 `test:launch-sim` 会离线模拟开盘执行流程，覆盖授权失败、余额不足、hook 不开、报价失败、低价买 20U、可接受价买 10U、追高跳过、先失败后恢复、先高后回落、simulation 失败、gas 不够等多种情况。
 
 这里的模拟不是另写一套思想推演：它会直接调用 `share-launch-executor` 的 `runLaunchExecutor`，用 mock chain client 和 mock wallet client 触发同一个开盘执行器；买入场景会走到 fake `writeContract`，但不会连接真实 RPC，也不会使用真实私钥。
+
+`test:exit-sim` 会直接触发真实 exit watcher 的止损、止盈、授权缺失、自动补授权、simulation 失败等场景。`test:auto-flow-sim` 会触发真实买入执行器，fake 买入成功后继续进入真实 exit watcher，再 fake 卖出。
 
 真实链上状态采样，默认每 5 秒采 12 次：
 

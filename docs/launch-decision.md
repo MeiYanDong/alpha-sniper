@@ -49,6 +49,14 @@ There is no "up to" sizing. The program can only buy exact `20 USDT`, exact `10 
 - Current exact tier semantics remain: `< 0.34` buys exact `20 USDT`; `0.34 - 0.38` buys exact `10 USDT`; above `0.38` skips.
 - `npm run test:launch-sim` triggers the real `share-launch-executor` through mock chain and wallet clients. Buy scenarios reach fake `writeContract`; no real RPC, private key, or wallet signing is used.
 
+The active prewarm command now uses:
+
+```bash
+npm run share:launch -- --warmup-ms 600000 --poll-ms 250 --gas-buffer-bps 12000 --gas-price-multiplier-bps 12000 --send --auto-exit --auto-approve-exit --exit-poll-ms 1000 --exit-max-watch-ms 7200000
+```
+
+With `--auto-exit`, a successful buy does not end the process. The executor immediately starts the exit watcher with the actual entry average from the buy quote.
+
 ## Current blocker
 
 The program can monitor, quote, build PancakeSwap Infinity Universal Router calldata, check dual Permit2 approvals, and dry-run readiness. It should not send a real buy or sell until the SHARE hook is started and the exact SHARE transaction simulation passes from the burner wallet.
@@ -64,6 +72,8 @@ Sell uses the reverse direction of the same Infinity CL pool: `SHARE -> USDT`.
 - If entry price is known, default stop loss is 15% below entry.
 - If entry price is known, default profit taking is 50% of position at +50%, and full exit at +100%.
 - If entry price is unknown, the program should only report `ENTRY_PRICE_UNKNOWN` and wait for manual/explicit sell instruction.
+- With `--auto-approve-exit`, if SHARE sell approval is missing after a successful buy, the program can send the required ERC20-to-Permit2 approval and Permit2-to-UniversalRouter approval for the current burner wallet SHARE balance before monitoring/selling.
+- `npm run test:exit-sim` triggers the real exit watcher with mock clients. `npm run test:auto-flow-sim` triggers the real buy executor, then the real exit watcher, and reaches fake buy and fake sell `writeContract` calls.
 
 Permit2 has two layers:
 

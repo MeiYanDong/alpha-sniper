@@ -16,6 +16,7 @@ import { loadConfigFromArgs, sameAddress } from "./config.js";
 import { getExecutionConfig } from "./decision.js";
 import { applySlippageBps, buildInfinityExactInputSingleExecute } from "./infinity-swap.js";
 import { fmtDecimal, toDecimalAmount } from "./math.js";
+import { runExitWatcher } from "./exit-watch.js";
 import {
   createBscClient,
   getTokenMeta,
@@ -374,6 +375,7 @@ export async function runLaunchExecutor({
 
   const send = hasFlag("--send", argv);
   const preflightOnly = hasFlag("--preflight-only", argv);
+  const autoExit = hasFlag("--auto-exit", argv);
   const [targetMeta, quoteMeta, poolKey] = await Promise.all([
     getTokenMetaFn(client, config.targetToken),
     getTokenMetaFn(client, config.quoteToken),
@@ -393,6 +395,7 @@ export async function runLaunchExecutor({
   logger.event("run_started", {
     mode: send ? "send" : "dry_run",
     preflightOnly,
+    autoExit,
     configName: config.name,
     launchTime: config.launchTime,
     wallet: account.address,
@@ -570,6 +573,25 @@ export async function runLaunchExecutor({
     bnb
   });
 
+  let exitResult = null;
+  if (autoExit && receipt.status === "success") {
+    logger.event("auto_exit_starting", { entryAvgPriceUsd: chosen.avg?.toString() });
+    exitResult = await runExitWatcher({
+      config,
+      account,
+      client,
+      walletClient,
+      entryAvgPriceUsd: chosen.avg?.toString(),
+      logger,
+      argv,
+      nowFn,
+      sleepFn,
+      getTokenMetaFn,
+      quoteFn
+    });
+    logger.event("auto_exit_finished", { exitResult });
+  }
+
   return {
     action: "BUY_EXACT_IN",
     reason: `MATCHED_TIER_${chosen.tier.name}`.toUpperCase(),
@@ -578,7 +600,8 @@ export async function runLaunchExecutor({
     avg: chosen.avg?.toString(),
     sent: true,
     hash,
-    receiptStatus: receipt.status
+    receiptStatus: receipt.status,
+    exitResult
   };
 }
 
