@@ -17,11 +17,11 @@ bash aws-cloudshell-deploy.sh
 
 ## 脚本会做什么
 
-- 使用 `ap-southeast-1`，实例类型默认 `t4g.nano`。
+- 使用 `ap-southeast-1`，默认自动选择 Free Tier eligible 实例，优先 `t3.micro`，再回退 `t2.micro`。
 - 创建 EC2 IAM role / instance profile。
 - 给实例授权读取 `/alpha-sniper/env/*` 下的 SSM Parameter Store 参数。
 - 创建一个无入站端口的 security group，实例只通过 SSM 管理。
-- 创建 Amazon Linux 2023 arm64 EC2。
+- 按实例架构创建对应的 Amazon Linux 2023 EC2。
 - 把 runtime secrets 写入 SSM SecureString：
   - `PRIVATE_KEY`
   - `BSC_RPC_URL`
@@ -83,10 +83,13 @@ sudo /usr/local/bin/alpha-sniper-live-first-block
 
 ```bash
 export AWS_REGION=ap-southeast-1
-export INSTANCE_TYPE=t4g.nano
+export INSTANCE_TYPE=t3.micro
+export INSTANCE_TYPE_CANDIDATES="t3.micro t2.micro"
 export DRY_RUN_GAS_GWEI=4.5
 export REPO_URL=https://github.com/MeiYanDong/alpha-sniper.git
 bash aws-cloudshell-deploy.sh
 ```
+
+如果不设置 `INSTANCE_TYPE`，脚本会自动从 `INSTANCE_TYPE_CANDIDATES` 中挑一个 AWS 标记为 Free Tier eligible 的实例。只有账户明确允许非 Free Tier EC2 时，才建议手动指定其它实例类型。
 
 当前 burner BNB 余额不足以覆盖 `300000 gas * 5 gwei`，默认使用 `4.5 gwei`。补足 BNB 后可把 `DRY_RUN_GAS_GWEI` 提高。

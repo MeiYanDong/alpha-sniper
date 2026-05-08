@@ -3,7 +3,8 @@ set -euo pipefail
 
 APP_NAME="${APP_NAME:-alpha-sniper}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-southeast-1}}"
-INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.nano}"
+INSTANCE_TYPE="${INSTANCE_TYPE:-}"
+INSTANCE_TYPE_CANDIDATES="${INSTANCE_TYPE_CANDIDATES:-t3.micro t2.micro}"
 REPO_URL="${REPO_URL:-https://github.com/MeiYanDong/alpha-sniper.git}"
 BRANCH="${BRANCH:-main}"
 PARAM_PREFIX="${PARAM_PREFIX:-/alpha-sniper/env}"
@@ -25,6 +26,63 @@ aws_json() {
 
 aws_text() {
   aws --region "$REGION" "$@" --output text
+}
+
+select_instance_type() {
+  local candidate selected
+
+  if [[ -n "$INSTANCE_TYPE" ]]; then
+    echo "$INSTANCE_TYPE"
+    return 0
+  fi
+
+  for candidate in $INSTANCE_TYPE_CANDIDATES; do
+    selected="$(aws_text ec2 describe-instance-types \
+      --instance-types "$candidate" \
+      --filters "Name=free-tier-eligible,Values=true" \
+      --query 'InstanceTypes[0].InstanceType' 2>/dev/null || true)"
+    if [[ "$selected" == "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  echo "No Free Tier eligible instance type found from: $INSTANCE_TYPE_CANDIDATES" >&2
+  echo "Set INSTANCE_TYPE explicitly only if this AWS account allows non-Free-Tier EC2 launches." >&2
+  exit 1
+}
+
+instance_architecture() {
+  local instance_type="$1"
+  local arch
+
+  arch="$(aws_text ec2 describe-instance-types \
+    --instance-types "$instance_type" \
+    --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures[0]')"
+
+  if [[ "$arch" == "None" || -z "$arch" ]]; then
+    echo "Could not resolve architecture for instance type: $instance_type" >&2
+    exit 1
+  fi
+
+  echo "$arch"
+}
+
+al2023_ami_parameter() {
+  local arch="$1"
+
+  case "$arch" in
+    arm64)
+      echo /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+      ;;
+    x86_64)
+      echo /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+      ;;
+    *)
+      echo "Unsupported EC2 architecture for Amazon Linux 2023: $arch" >&2
+      exit 1
+      ;;
+  esac
 }
 
 prompt_secret_param() {
@@ -364,7 +422,13 @@ main() {
   echo "Waiting for IAM instance profile propagation..."
   sleep 15
 
-  local vpc_id subnet_id sg_id ami_id user_data instance_id
+  local vpc_id subnet_id sg_id ami_id user_data instance_id instance_type instance_arch ami_param
+  instance_type="$(select_instance_type)"
+  instance_arch="$(instance_architecture "$instance_type")"
+  ami_param="$(al2023_ami_parameter "$instance_arch")"
+
+  echo "Using EC2 instance type: $instance_type ($instance_arch)"
+
   vpc_id="$(aws_text ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId')"
   if [[ "$vpc_id" == "None" || -z "$vpc_id" ]]; then
     echo "No default VPC found in $REGION. Create a VPC first or set AWS_REGION to a region with a default VPC." >&2
@@ -382,7 +446,7 @@ main() {
 
   sg_id="$(ensure_security_group "$vpc_id")"
   ami_id="$(aws_text ssm get-parameter \
-    --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64 \
+    --name "$ami_param" \
     --query 'Parameter.Value')"
 
   user_data="$(mktemp)"
@@ -390,7 +454,7 @@ main() {
 
   instance_id="$(aws_text ec2 run-instances \
     --image-id "$ami_id" \
-    --instance-type "$INSTANCE_TYPE" \
+    --instance-type "$instance_type" \
     --iam-instance-profile "Name=$PROFILE_NAME" \
     --subnet-id "$subnet_id" \
     --security-group-ids "$sg_id" \
