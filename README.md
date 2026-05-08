@@ -131,6 +131,15 @@ npm run share:postmortem -- --run data/runs/具体文件.jsonl --launch-block 97
 
 `--offline` 只读本地 run log；不加 `--offline` 会尝试读取链上 receipt、txIndex 和 launch block 里的候选交易。
 
+AWS 部署优先走 CloudShell，避免本机 `aws login` 的 SignIn 400 问题：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MeiYanDong/alpha-sniper/main/scripts/aws-cloudshell-deploy.sh -o aws-cloudshell-deploy.sh
+bash aws-cloudshell-deploy.sh
+```
+
+细节见 [docs/aws-deploy.md](docs/aws-deploy.md)。
+
 通用真实买/卖测试走同一个 Infinity Universal Router 路径：
 
 ```bash
