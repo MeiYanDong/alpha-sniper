@@ -1,0 +1,28 @@
+{
+  "name": "alpha-sniper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "share:status": "node src/status.js --config config/share.json",
+    "share:watch": "node src/watch.js --config config/share.json",
+    "share:wallet": "node src/wallet-check.js --config config/share.json",
+    "share:ready": "node src/execution-readiness.js --config config/share.json",
+    "share:approve": "node src/approve-permit2.js --config config/share.json",
+    "share:launch": "node src/share-launch-executor.js --config config/share.json",
+    "share:sell:ready": "node src/sell-readiness.js --config config/share.json",
+    "infinity:swap": "node src/execute-infinity-swap.js",
+    "infinity:test-pools": "node src/find-similar-pools.js --config config/share.json",
+    "rpc:check": "node src/provider-check.js",
+    "rpc:stress": "node src/rpc-stress.js --config config/share.json",
+    "data:sample": "node src/sample-state.js --config config/share.json",
+    "test:scenarios": "node src/scenario-test.js --config config/share.json",
+    "test:launch-sim": "node src/launch-flow-simulation.js --config config/share.json",
+    "check": "node --check src/status.js && node --check src/watch.js && node --check src/wallet-check.js && node --check src/execution-readiness.js && node --check src/approve-permit2.js && node --check src/share-launch-executor.js && node --check src/sell-readiness.js && node --check src/execute-infinity-swap.js && node --check src/find-similar-pools.js && node --check src/provider-check.js && node --check src/rpc-stress.js && node --check src/sample-state.js && node --check src/scenario-test.js && node --check src/launch-flow-simulation.js && node --check src/decision.js && node --check src/pools.js && node --check src/infinity-swap.js && node --check src/math.js && node --check src/config.js && node --check src/env.js && node --check src/abis.js"
+  },
+  "dependencies": {
+    "decimal.js": "^10.6.0",
+    "dotenv": "^17.2.3",
+    "viem": "^2.41.2"
+  }
+}

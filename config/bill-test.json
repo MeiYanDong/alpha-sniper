@@ -1,0 +1,57 @@
+{
+  "name": "BILL/USDT real execution test",
+  "chainId": 56,
+  "defaultRpcUrl": "https://bsc-dataseed.binance.org",
+  "rpcUrlEnv": "BSC_RPC_URL",
+  "targetToken": "0xDf24f8c21Cb404B3031a450D8e049D6E39FC1fA5",
+  "quoteToken": "0x55d398326f99059fF775485246999027B3197955",
+  "quoteSymbol": "USDT",
+  "launchTime": "2026-05-08T00:00:00+08:00",
+  "rules": {
+    "idealMaxPriceUsd": "0.08",
+    "maxBuyPriceUsd": "0.10",
+    "cautionPriceUsd": "0.12",
+    "noChasePriceUsd": "0.15",
+    "maxSpendUsdt": "1",
+    "probeSpendUsdt": "1"
+  },
+  "execution": {
+    "mode": "REAL_TEST_EXACT_IN",
+    "maxSpendUsdt": "1",
+    "maxSlippageBps": 500,
+    "manualReviewDisabled": false
+  },
+  "exit": {
+    "mode": "QUOTE_THEN_EXACT_IN",
+    "defaultSellBps": 10000,
+    "maxSlippageBps": 500
+  },
+  "quoteProbeAmountsUsdt": ["1"],
+  "addresses": {
+    "pancakeV2Factory": "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73",
+    "pancakeV2Router": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    "pancakeV3Factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+    "pancakeV3SwapRouter": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+    "pancakeSmartRouter": "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    "infinityVault": "0x238a358808379702088667322f80aC48bAd5e6c4",
+    "infinityCLPoolManager": "0xa0FfB9c1CE1Fe56963B0321B32E7A0302114058b",
+    "infinityBinPoolManager": "0xC697d2898e0D09264376196696c51D7aBbbAA4a9",
+    "infinityCLQuoter": "0xd0737C9762912dD34c3271197E362Aa736Df0926",
+    "infinityUniversalRouter": "0xd9c500dff816a1da21a48a732d3498bf09dc9aeb",
+    "permit2": "0x31c2F6fcFf4F8759b3Bd5Bf0e1084A055615c768"
+  },
+  "protocols": {
+    "v2": false,
+    "v3FeeTiers": [],
+    "infinityCL": {
+      "enabled": true,
+      "poolId": "0x673dbd89b4de73f139ccca01f515536d386bc993c35efb3abf0a4d4b02b6dd20",
+      "expectedHook": "0xb0BAa371b899950B4Ef6A27c21bAf5ef7c434d0f",
+      "currency0": "0x55d398326f99059fF775485246999027B3197955",
+      "currency1": "0xDf24f8c21Cb404B3031a450D8e049D6E39FC1fA5",
+      "fromBlock": 96123336,
+      "scanInitializeLogs": false
+    }
+  },
+  "readwiseBenchmarks": []
+}

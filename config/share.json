@@ -1,0 +1,90 @@
+{
+  "name": "SHAREX SHARE",
+  "chainId": 56,
+  "defaultRpcUrl": "https://bsc-dataseed.binance.org",
+  "rpcUrlEnv": "BSC_RPC_URL",
+  "targetToken": "0x5FCA51aff213bFBEAB0b711b93c3374252fD6aC3",
+  "quoteToken": "0x55d398326f99059fF775485246999027B3197955",
+  "quoteSymbol": "USDT",
+  "launchTime": "2026-05-08T18:00:00+08:00",
+  "rules": {
+    "idealMaxPriceUsd": "0.34",
+    "maxBuyPriceUsd": "0.38",
+    "cautionPriceUsd": "0.43",
+    "noChasePriceUsd": "0.48",
+    "maxSpendUsdt": "300",
+    "probeSpendUsdt": "50"
+  },
+  "execution": {
+    "mode": "AUTO_TIERED_EXACT_IN",
+    "maxSpendUsdt": "20",
+    "autoBuyTiers": [
+      {
+        "name": "ideal",
+        "avgPriceLtUsd": "0.34",
+        "amountInUsdt": "20"
+      },
+      {
+        "name": "acceptable",
+        "avgPriceGteUsd": "0.34",
+        "avgPriceLteUsd": "0.38",
+        "amountInUsdt": "10"
+      }
+    ],
+    "maxSlippageBps": 500,
+    "manualReviewDisabled": true
+  },
+  "exit": {
+    "mode": "QUOTE_THEN_EXACT_IN",
+    "defaultSellBps": 10000,
+    "maxSlippageBps": 500,
+    "stopLossFromEntryPct": "15",
+    "takeProfitTiers": [
+      {
+        "name": "first_profit",
+        "gainFromEntryPctGte": "50",
+        "sellBps": 5000
+      },
+      {
+        "name": "full_exit",
+        "gainFromEntryPctGte": "100",
+        "sellBps": 10000
+      }
+    ]
+  },
+  "quoteProbeAmountsUsdt": ["50", "300", "1000"],
+  "addresses": {
+    "pancakeV2Factory": "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73",
+    "pancakeV2Router": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    "pancakeV3Factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+    "pancakeV3SwapRouter": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+    "pancakeSmartRouter": "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    "infinityVault": "0x238a358808379702088667322f80aC48bAd5e6c4",
+    "infinityCLPoolManager": "0xa0FfB9c1CE1Fe56963B0321B32E7A0302114058b",
+    "infinityBinPoolManager": "0xC697d2898e0D09264376196696c51D7aBbbAA4a9",
+    "infinityCLQuoter": "0xd0737C9762912dD34c3271197E362Aa736Df0926",
+    "infinityUniversalRouter": "0xd9c500dff816a1da21a48a732d3498bf09dc9aeb",
+    "permit2": "0x31c2F6fcFf4F8759b3Bd5Bf0e1084A055615c768"
+  },
+  "protocols": {
+    "v2": true,
+    "v3FeeTiers": [100, 500, 2500, 10000],
+    "infinityCL": {
+      "enabled": true,
+      "poolId": "0x7cc59be0a3754a33144a091e7b62dbcbf1a7a6f8540f224f4798fb739fd742e9",
+      "expectedHook": "0xb0BAa371b899950B4Ef6A27c21bAf5ef7c434d0f",
+      "currency0": "0x55d398326f99059fF775485246999027B3197955",
+      "currency1": "0x5FCA51aff213bFBEAB0b711b93c3374252fD6aC3",
+      "fromBlock": 96690000,
+      "scanInitializeLogs": false
+    }
+  },
+  "readwiseBenchmarks": [
+    { "amountInUsdt": "100000", "avgUsd": "0.32016088", "endUsd": "0.34163086" },
+    { "amountInUsdt": "200000", "avgUsd": "0.34030167", "endUsd": "0.38596569" },
+    { "amountInUsdt": "300000", "avgUsd": "0.36044245", "endUsd": "0.43300450" },
+    { "amountInUsdt": "400000", "avgUsd": "0.38058323", "endUsd": "0.48274729" },
+    { "amountInUsdt": "500000", "avgUsd": "0.40072401", "endUsd": "0.53519406" },
+    { "amountInUsdt": "600000", "avgUsd": "0.42086480", "endUsd": "0.59034488" }
+  ]
+}
