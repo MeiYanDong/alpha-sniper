@@ -7,6 +7,8 @@ OPERATOR_PROFILE="${AWS_OPERATOR_PROFILE:-alpha-sniper-operator}"
 OPERATOR_USER="${AWS_OPERATOR_USER:-alpha-sniper-operator}"
 POLICY_NAME="${AWS_OPERATOR_POLICY_NAME:-alpha-sniper-operator-ssm}"
 DELETE_OLDEST_KEY="${DELETE_OLDEST_KEY:-no}"
+DOCTOR_RETRIES="${DOCTOR_RETRIES:-8}"
+DOCTOR_RETRY_SECONDS="${DOCTOR_RETRY_SECONDS:-2}"
 
 usage() {
   cat <<'USAGE'
@@ -24,6 +26,7 @@ Env:
   AWS_OPERATOR_PROFILE=alpha-sniper-operator
   AWS_OPERATOR_USER=alpha-sniper-operator
   DELETE_OLDEST_KEY=yes   Delete the oldest existing key if the user already has 2 keys.
+  DOCTOR_RETRIES=8        Retry profile verification after creating a fresh IAM key.
 USAGE
 }
 
@@ -37,6 +40,15 @@ require_cmd() {
 profile_exists() {
   aws configure get "profile.${OPERATOR_PROFILE}.aws_access_key_id" >/dev/null 2>&1 ||
     aws configure get aws_access_key_id --profile "$OPERATOR_PROFILE" >/dev/null 2>&1
+}
+
+require_admin_auth() {
+  local arn
+  if ! arn="$(aws sts get-caller-identity --region "$REGION" --query Arn --output text)"; then
+    echo "Current AWS admin login is not usable. Re-run aws login, then retry install." >&2
+    exit 1
+  fi
+  echo "Admin identity: $arn"
 }
 
 discover_instance_ids() {
@@ -146,9 +158,22 @@ doctor() {
   echo "Region: $REGION"
 }
 
+doctor_with_retry() {
+  local attempt
+  for attempt in $(seq 1 "$DOCTOR_RETRIES"); do
+    if doctor; then
+      return 0
+    fi
+    sleep "$DOCTOR_RETRY_SECONDS"
+  done
+  return 1
+}
+
 install() {
   local account_id policy_file instance_id
   local instance_ids=()
+
+  require_admin_auth
 
   while IFS= read -r instance_id; do
     [[ -n "$instance_id" ]] && instance_ids+=("$instance_id")
@@ -170,9 +195,14 @@ install() {
     --policy-document "file://$policy_file" >/dev/null
   rm -f "$policy_file"
 
+  if doctor >/dev/null 2>&1; then
+    echo "Stable AWS profile already works: $OPERATOR_PROFILE"
+    return 0
+  fi
+
   ensure_key_capacity
   write_local_profile_from_new_key
-  doctor
+  doctor_with_retry
 }
 
 main() {
