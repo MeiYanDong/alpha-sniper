@@ -164,6 +164,7 @@ Current deployment recommendation:
   - `npm run raw:broadcaster` starts a token-protected broadcaster that does not load `PRIVATE_KEY`.
   - `--remote-broadcaster-urls` lets the signer send the same signed raw tx to remote broadcasters in parallel with local RPC broadcast.
   - `scripts/aws-ssm-run.sh broadcaster-health` validates the broadcaster health path locally on an instance.
+  - `npm run test:raw-broadcaster` runs a mock-RPC integration test covering health, auth failure, invalid raw tx rejection, prewarm, and mixed success/rejection broadcast.
 
 ## Safe Operating Rule
 

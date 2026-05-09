@@ -19,6 +19,7 @@ Commands:
   dry-run           Run the first-block dry-run helper.
   rpc-check         Run npm run rpc:check on the instance.
   rpc-race          Run npm run test:rpc-race on the instance.
+  raw-broadcaster-test Run mock-RPC no-key broadcaster integration test.
   rpc-stress-short  Run a short AWS-side RPC stress ladder.
   broadcast-latency Run invalid-raw-tx broadcast rejection latency test.
   broadcast-latency-signed Run zero-balance signed-tx rejection latency test.
@@ -129,6 +130,9 @@ main() {
       ;;
     rpc-race)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run test:rpc-race"'
+      ;;
+    raw-broadcaster-test)
+      command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run test:raw-broadcaster"'
       ;;
     rpc-stress-short)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 4,8,16,32 --max-failure-pct 1 --max-p95-ms 1000"'
