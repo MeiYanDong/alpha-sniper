@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 09:43 CST`
+Last updated: `2026-05-09 09:48 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `af2f6e1`.
+- Latest deployed commit: `f7a0621`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -72,8 +72,21 @@ Last updated: `2026-05-09 09:43 CST`
 - Conclusion: Ankr timeout was specific to malformed invalid raw tx handling. For real-format signed tx entry testing, Ankr is currently the fastest us-west-2 broadcast endpoint.
 - Local `test:launch-sim` passed with scenario `S17C`, confirming a remote no-key broadcaster receives the same signed raw tx while the local multi-RPC path remains active.
 - Local raw broadcaster `/health` and `/prewarm` passed on `127.0.0.1`, returning `privateKeyRequired=false`.
+- Local raw broadcaster HTTP behavior passed:
+  - unauthorized `/prewarm` returns `401`,
+  - authorized `/prewarm` works,
+  - zero-balance signed `/broadcast` returns `502` with all providers rejected and `accepted=0`.
 - AWS US West sync to `af2f6e1` succeeded; remote `check`, `broadcaster-health`, and first-block `dry-run` passed.
 - AWS US West broadcaster health returned `privateKeyRequired=false` with providers `chainstack-primary`, `ankr-bsc`, and `public-bsc`.
+- AWS US West sync to `f7a0621` succeeded; remote `check`, `broadcaster-health`, `broadcast-latency-signed`, and first-block `dry-run` passed.
+- AWS US West raw broadcaster HTTP behavior passed:
+  - unauthorized `/prewarm` returns `401`,
+  - authorized `/prewarm` reached all three providers,
+  - zero-balance signed `/broadcast` returns `502` with all providers rejected and `accepted=0`.
+- Latest AWS signed broadcast rejection latency:
+  - Chainstack `p50=259.6ms`, `p95=2973.1ms`,
+  - Ankr `p50=34.9ms`, `p95=38.1ms`,
+  - Public BSC `p50=60.4ms`, `p95=61.0ms`.
 - AWS US West sync to `74ae9ae` succeeded; remote `check`, `broadcast:latency`, and first-block `dry-run` passed.
 - AWS US West broadcast rejection latency with invalid raw tx `0x00`:
   - Chainstack: `p50=130.8ms`, `p95=185.9ms`, accepted `0/5`,
