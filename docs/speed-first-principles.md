@@ -28,6 +28,19 @@ Polling and quote speed only help the post-open path. They cannot beat transacti
 
 Broadcast should return as soon as the first provider accepts `eth_sendRawTransaction`. Waiting for every provider to finish slows down receipt monitoring and pending handling. The remaining providers should keep draining in the background and write a final broadcast report to JSONL.
 
+### P0: No-Key Remote Broadcasters
+
+The signer should stay unique. Extra regions should run no-key broadcasters that only receive one pre-signed raw transaction and forward it to their local RPC providers.
+
+Current support:
+
+```bash
+npm run raw:broadcaster -- --host 127.0.0.1 --port 8787 --broadcast-public
+npm run share:launch -- --remote-broadcaster-urls http://host:8787 --remote-broadcaster-token "$REMOTE_BROADCASTER_TOKEN"
+```
+
+The broadcaster requires `RAW_BROADCASTER_TOKEN` or `REMOTE_BROADCASTER_TOKEN`, exposes `/health`, `/prewarm`, and `/broadcast`, and does not load or need `PRIVATE_KEY`.
+
 ### P0: Pre-Sign Recovery Transactions
 
 If `--first-block-on-pending replace` or `cancel` is selected, the recovery transaction must be signed before the broadcast moment with the same nonce.

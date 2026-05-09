@@ -106,6 +106,7 @@ npm run share:launch -- --first-block --first-block-tier acceptable --first-bloc
 - `--gas-price-gwei-floor / --gas-price-gwei-cap / --gas-price-gwei-fixed`：给 gas price 加绝对下限、上限或固定值，避免“当前 gas 太低，2x 仍然不够”的问题。
 - `--gas-price-gwei-fixed 4.5`：首区块速度优先时推荐固定 gas price，跳过开盘前 gas price RPC 读取，并避免“当前 gas 太低，2x 仍不够”。当前最近观测的 BNB 余额约 `0.0024642891 BNB`，可覆盖 `5 gwei * 300000 gas = 0.0015 BNB`；如果提高到 `5 gwei` 以上，临盘前必须重查 gas budget。
 - `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；广播默认首个 RPC 接受即返回，剩余 RPC 在后台完成并写入 run log。需要旧行为时加 `--broadcast-wait-all`。
+- `--remote-broadcaster-urls https://...`：把同一笔 signed raw tx 同步发送给无私钥 broadcaster。远端只接收 raw tx 并转发到自己的 RPC，不读取也不需要 `PRIVATE_KEY`；必须配 `REMOTE_BROADCASTER_TOKEN` 或 `--remote-broadcaster-token`。
 - `--broadcast-prewarm-ms 3000`：在广播前约 3 秒对每个广播 RPC 做轻量读，预热 DNS/TLS/provider 路径。
 - `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；速度优先时应改为开盘前预授权，不等买入后再授权。
 - `--first-block`：不等 quote 成功，开盘前按目标 tier 的最高接受均价反推 `minOut`，预构建并预签名 raw transaction，在 `launchTime + --first-block-broadcast-offset-ms` 广播。默认选择最高价格上限的 tier，也就是当前 `acceptable` 档。
@@ -203,6 +204,7 @@ npm run share:cache:warm
 npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 64,80,96 --max-failure-pct 1 --max-p95-ms 1000
 npm run broadcast:latency -- --samples 5 --timeout-ms 3000 --prewarm
 npm run broadcast:latency -- --mode zero-balance-signed --samples 5 --timeout-ms 3000 --prewarm
+npm run raw:broadcaster -- --host 127.0.0.1 --port 8787 --broadcast-public
 npm run data:sample -- --count 12 --interval-ms 5000
 npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250
 ```

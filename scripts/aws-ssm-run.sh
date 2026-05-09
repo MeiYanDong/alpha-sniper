@@ -22,6 +22,7 @@ Commands:
   rpc-stress-short  Run a short AWS-side RPC stress ladder.
   broadcast-latency Run invalid-raw-tx broadcast rejection latency test.
   broadcast-latency-signed Run zero-balance signed-tx rejection latency test.
+  broadcaster-health Start a local no-key broadcaster briefly and query health.
   timer-precision   Measure Node.js timer wake-up error on the instance.
   logs              Tail bootstrap and latest run-log names.
   raw -- <command>  Run an explicit shell command through SSM.
@@ -137,6 +138,9 @@ main() {
       ;;
     broadcast-latency-signed)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run broadcast:latency -- --mode zero-balance-signed --samples 5 --timeout-ms 3000 --prewarm"'
+      ;;
+    broadcaster-health)
+      command='sudo -u alpha bash -lc '\''cd /opt/alpha-sniper && RAW_BROADCASTER_TOKEN=healthcheck npm run raw:broadcaster -- --host 127.0.0.1 --port 8787 --broadcast-public >/tmp/alpha-raw-broadcaster.log 2>&1 & pid=$!; trap "kill $pid 2>/dev/null || true" EXIT; for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/health && exit 0; sleep 0.25; done; cat /tmp/alpha-raw-broadcaster.log; exit 1'\'''
       ;;
     timer-precision)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250"'

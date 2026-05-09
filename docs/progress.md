@@ -106,7 +106,7 @@ Current deployment recommendation:
 
 - Keep `us-west-2` as the active test candidate.
 - Keep `ap-southeast-1` only until the user decides whether to terminate it; running both doubles EC2 hours.
-- Provider pressure control and broadcast-response latency testing are now implemented. The next speed-only code optimization is no-key multi-region broadcaster support.
+- Provider pressure control, broadcast-response latency testing, and no-key raw broadcaster foundation are now implemented.
 
 ## Known Constraints
 
@@ -115,7 +115,7 @@ Current deployment recommendation:
 - First-block execution can still revert if broadcast lands in a pre-open block before the hook starts. At current trade size, this gas loss is usually smaller than the operational risk of missing the block, but nonce occupation must be handled explicitly.
 - Increasing buy size does not solve first-block ordering. Gas price, pre-signing, broadcast timing, and RPC propagation matter more.
 - Public BSC RPC is useful as fallback/broadcast only. It should not be in the hot quote/read race unless paid providers are unavailable.
-- Multi-region broadcasting is not implemented yet. The current architecture is one signer instance per deployed region with multi-RPC broadcast. Do not run live sends from both regions for the same wallet at the same time.
+- Multi-region remote broadcaster support is code-complete but not externally exposed or production-wired. The current deployed instances still have no inbound ports. Do not run live sends from two signer instances for the same wallet at the same time.
 
 ## Next Work
 
@@ -123,7 +123,7 @@ Current deployment recommendation:
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
 3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
-5. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
+5. Decide whether to expose a no-key broadcaster in a second region, and if yes, add network-level allowlisting plus token rotation before any live use.
 6. Build a reusable new-token config generator/checklist so launch-time target changes do not require manual file edits across multiple places.
 
 ## Implemented Improvements After Comparison
@@ -139,6 +139,10 @@ Current deployment recommendation:
 - Added `npm run timer:precision` to measure Node.js wake-up error for launch-time scheduling.
 - Added `scripts/aws-ssm-run.sh timer-precision` for remote instance timing checks.
 - Added `npm run broadcast:latency` plus `scripts/aws-ssm-run.sh broadcast-latency` / `broadcast-latency-signed` to measure `eth_sendRawTransaction` rejection-path latency with invalid raw tx and zero-balance signed tx modes.
+- Added no-key raw broadcaster support:
+  - `npm run raw:broadcaster` starts a token-protected broadcaster that does not load `PRIVATE_KEY`.
+  - `--remote-broadcaster-urls` lets the signer send the same signed raw tx to remote broadcasters in parallel with local RPC broadcast.
+  - `scripts/aws-ssm-run.sh broadcaster-health` validates the broadcaster health path locally on an instance.
 
 ## Safe Operating Rule
 

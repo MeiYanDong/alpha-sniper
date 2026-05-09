@@ -141,6 +141,23 @@ const scenarios = [
     expected: { action: "BUY_EXACT_IN", amountInUsdt: "20", tier: "ideal", sent: true, writeCalls: 0, broadcastCalls: 2 }
   },
   {
+    id: "S17C",
+    name: "无私钥远端 broadcaster 会收到同一笔 signed raw tx",
+    multiRpcBroadcast: true,
+    remoteBroadcasterUrls: "http://127.0.0.1:8787",
+    remoteBroadcasterToken: "simulation-token",
+    quoteAttempts: [{ quotes: { default: { ok: true, avg: "0.32" } } }],
+    expected: {
+      action: "BUY_EXACT_IN",
+      amountInUsdt: "20",
+      tier: "ideal",
+      sent: true,
+      writeCalls: 0,
+      broadcastCalls: 1,
+      remoteBroadcastCalls: 1
+    }
+  },
+  {
     id: "S18",
     name: "首区块模式预签名并临界广播，不等 quote 成功",
     firstBlock: true,
@@ -380,6 +397,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
     quoteCalls: 0,
     writeCalls: 0,
     broadcastCalls: 0,
+    remoteBroadcastCalls: 0,
     receiptCalls: 0,
     tiersPerAttempt: baseConfig.execution.autoBuyTiers.length,
     ...rawScenario
@@ -408,6 +426,14 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
   }
   if (scenario.multiRpcBroadcast) {
     argv.push("--multi-rpc-broadcast", "--broadcast-public", "--broadcast-labels", scenario.broadcastLabels || "public-bsc");
+  }
+  if (scenario.remoteBroadcasterUrls) {
+    argv.push(
+      "--remote-broadcaster-urls",
+      scenario.remoteBroadcasterUrls,
+      "--remote-broadcaster-token",
+      scenario.remoteBroadcasterToken || "simulation-token"
+    );
   }
   if (scenario.firstBlock) {
     argv.push(
@@ -458,6 +484,15 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
           throw error;
         }
         return `0x${scenario.id.toLowerCase().padEnd(64, "b")}`;
+      },
+      broadcastRemoteRawTransactionFn: async () => {
+        scenario.remoteBroadcastCalls += 1;
+        return {
+          hash: `0x${scenario.id.toLowerCase().padEnd(64, "c")}`,
+          winnerLabel: "remote-sim",
+          okCount: 1,
+          providerCount: 1
+        };
       }
     });
     return {
@@ -465,6 +500,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
       events: logger.events,
       writeCalls: scenario.writeCalls,
       broadcastCalls: scenario.broadcastCalls,
+      remoteBroadcastCalls: scenario.remoteBroadcastCalls,
       quoteCalls: scenario.quoteCalls
     };
   } catch (error) {
@@ -488,6 +524,7 @@ async function runActualExecutorScenario({ baseConfig, rawScenario }) {
       events: logger.events,
       writeCalls: scenario.writeCalls,
       broadcastCalls: scenario.broadcastCalls,
+      remoteBroadcastCalls: scenario.remoteBroadcastCalls,
       quoteCalls: scenario.quoteCalls
     };
   }
@@ -513,6 +550,7 @@ async function main() {
     assertExpected(scenario, result);
     const expectedWriteCalls = scenario.expected.writeCalls ?? (result.action === "BUY_EXACT_IN" ? 1 : 0);
     const expectedBroadcastCalls = scenario.expected.broadcastCalls ?? 0;
+    const expectedRemoteBroadcastCalls = scenario.expected.remoteBroadcastCalls ?? 0;
     assert.equal(
       result.writeCalls,
       expectedWriteCalls,
@@ -522,6 +560,11 @@ async function main() {
       result.broadcastCalls,
       expectedBroadcastCalls,
       `${scenario.id} should trigger expected fake raw broadcasts`
+    );
+    assert.equal(
+      result.remoteBroadcastCalls,
+      expectedRemoteBroadcastCalls,
+      `${scenario.id} should trigger expected fake remote raw broadcasts`
     );
     if (scenario.expected.quoteCalls !== undefined) {
       assert.equal(

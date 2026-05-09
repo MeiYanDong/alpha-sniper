@@ -601,6 +601,85 @@ async function broadcastRawTransaction({ provider, serializedTransaction, timeou
   return rawRpcCall(provider.url, "eth_sendRawTransaction", [serializedTransaction], { timeoutMs });
 }
 
+function parseCsv(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function broadcasterEndpoint(baseUrl, endpoint) {
+  const url = new URL(baseUrl);
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`;
+  return url.toString();
+}
+
+function remoteBroadcasterLabel(url, index) {
+  try {
+    return `remote-${new URL(url).host || index + 1}`;
+  } catch {
+    return `remote-${index + 1}`;
+  }
+}
+
+function getRemoteBroadcasters(argv) {
+  const urls = parseCsv(argValueFrom(argv, "--remote-broadcaster-urls", process.env.REMOTE_BROADCASTER_URLS || ""));
+  if (urls.length === 0) return { broadcasters: [], token: "" };
+  const token =
+    argValueFrom(
+      argv,
+      "--remote-broadcaster-token",
+      process.env.REMOTE_BROADCASTER_TOKEN || process.env.RAW_BROADCASTER_TOKEN || ""
+    ) || "";
+  if (!token) {
+    throw new Error("Remote broadcasters require --remote-broadcaster-token or REMOTE_BROADCASTER_TOKEN");
+  }
+  return {
+    token,
+    broadcasters: urls.map((url, index) => ({
+      url,
+      label: remoteBroadcasterLabel(url, index)
+    }))
+  };
+}
+
+async function postJsonWithTimeout(url, body, { timeoutMs, token }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || json.ok === false) {
+      const error = new Error(json.error || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return json;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function broadcastRemoteRawTransaction({ broadcaster, serializedTransaction, timeoutMs, token }) {
+  return postJsonWithTimeout(
+    broadcasterEndpoint(broadcaster.url, "/broadcast"),
+    { rawTx: serializedTransaction },
+    { timeoutMs, token }
+  );
+}
+
+async function prewarmRemoteBroadcaster({ broadcaster, timeoutMs, token }) {
+  return postJsonWithTimeout(broadcasterEndpoint(broadcaster.url, "/prewarm"), {}, { timeoutMs, token });
+}
+
 async function resolveGasPrice({ client, argv, fastLaunch }) {
   const fixed = parseGweiArg(argv, "--gas-price-gwei-fixed");
   const floor = parseGweiArg(argv, "--gas-price-gwei-floor");
@@ -728,8 +807,8 @@ async function waitForTransactionReceiptWithTimeout({ client, hash, timeoutMs, s
 function summarizeBroadcastResults(results) {
   return results.map((result) =>
     result.ok
-      ? { label: result.label, ok: true, hash: result.hash }
-      : { label: result.label, ok: false, errorType: result.errorType }
+      ? { label: result.label, ok: true, hash: result.hash, remote: Boolean(result.remote) }
+      : { label: result.label, ok: false, errorType: result.errorType, remote: Boolean(result.remote) }
   );
 }
 
@@ -748,10 +827,13 @@ async function broadcastPreparedRawTransaction({
   logger,
   eventName = "multi_rpc_broadcast",
   broadcastRawTransactionFn = broadcastRawTransaction,
+  remoteBroadcasters = [],
+  remoteBroadcasterToken = "",
+  broadcastRemoteRawTransactionFn = broadcastRemoteRawTransaction,
   waitAll = false
 }) {
   const startedAt = performance.now();
-  const tasks = providers.map(async (provider) => {
+  const localTasks = providers.map(async (provider) => {
     try {
       const hash = await broadcastRawTransactionFn({ provider, serializedTransaction, timeoutMs });
       return { ok: true, label: provider.label, hash };
@@ -764,6 +846,34 @@ async function broadcastPreparedRawTransaction({
       };
     }
   });
+  const remoteTasks = remoteBroadcasters.map(async (broadcaster) => {
+    try {
+      const result = await broadcastRemoteRawTransactionFn({
+        broadcaster,
+        serializedTransaction,
+        timeoutMs,
+        token: remoteBroadcasterToken
+      });
+      return {
+        ok: true,
+        label: broadcaster.label,
+        hash: result.hash,
+        remote: true,
+        winnerLabel: result.winnerLabel,
+        okCount: result.okCount,
+        providerCount: result.providerCount
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        label: broadcaster.label,
+        remote: true,
+        errorType: classifyRpcError(error),
+        message: error.shortMessage || error.message || String(error)
+      };
+    }
+  });
+  const tasks = [...localTasks, ...remoteTasks];
 
   if (waitAll) {
     const results = await Promise.all(tasks);
@@ -876,6 +986,53 @@ async function prewarmBroadcastProviders({ providers, timeoutMs, logger, eventNa
   return results;
 }
 
+async function prewarmRemoteBroadcasters({
+  broadcasters,
+  timeoutMs,
+  token,
+  logger,
+  eventName = "remote_broadcast_prewarm"
+}) {
+  if (broadcasters.length === 0) return [];
+  const startedAt = performance.now();
+  const results = await Promise.all(
+    broadcasters.map(async (broadcaster) => {
+      try {
+        const result = await prewarmRemoteBroadcaster({ broadcaster, timeoutMs, token });
+        return {
+          ok: true,
+          label: broadcaster.label,
+          okCount: result.okCount,
+          providerCount: result.providerCount
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          label: broadcaster.label,
+          errorType: classifyRpcError(error),
+          message: shortErrorMessage(error)
+        };
+      }
+    })
+  );
+  logger.event(eventName, {
+    latencyMs: Math.round(performance.now() - startedAt),
+    okCount: results.filter((result) => result.ok).length,
+    broadcasterCount: broadcasters.length,
+    broadcasters: results.map((result) =>
+      result.ok
+        ? {
+            label: result.label,
+            ok: true,
+            okCount: result.okCount,
+            providerCount: result.providerCount
+          }
+        : { label: result.label, ok: false, errorType: result.errorType }
+    )
+  });
+  return results;
+}
+
 async function sendBuyTransaction({
   config,
   account,
@@ -886,7 +1043,8 @@ async function sendBuyTransaction({
   gasPrice,
   argv,
   logger,
-  broadcastRawTransactionFn = broadcastRawTransaction
+  broadcastRawTransactionFn = broadcastRawTransaction,
+  broadcastRemoteRawTransactionFn = broadcastRemoteRawTransaction
 }) {
   const multiRpcBroadcast = hasFlag("--multi-rpc-broadcast", argv);
   if (!multiRpcBroadcast) {
@@ -906,6 +1064,7 @@ async function sendBuyTransaction({
 
   const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
   const providers = getBroadcastProviders({ config, argv });
+  const remote = getRemoteBroadcasters(argv);
   const { serializedTransaction } = await signRawBuyTransaction({
     config,
     account,
@@ -920,6 +1079,9 @@ async function sendBuyTransaction({
     timeoutMs,
     logger,
     broadcastRawTransactionFn,
+    remoteBroadcasters: remote.broadcasters,
+    remoteBroadcasterToken: remote.token,
+    broadcastRemoteRawTransactionFn,
     waitAll: hasFlag("--broadcast-wait-all", argv)
   });
 
@@ -1071,7 +1233,8 @@ async function runFirstBlockPrebroadcast({
   sleepFn,
   getTokenMetaFn,
   quoteFn,
-  broadcastRawTransactionFn
+  broadcastRawTransactionFn,
+  broadcastRemoteRawTransactionFn
 }) {
   const tier = selectFirstBlockTier({ execution, argv });
   const amountInUsdt = argValueFrom(argv, "--first-block-amount-usdt", tier.amountInUsdt);
@@ -1140,6 +1303,7 @@ async function runFirstBlockPrebroadcast({
   const broadcastAt = launchAt + broadcastOffsetMs;
   const timeoutMs = Number(argValueFrom(argv, "--broadcast-timeout-ms", "3000"));
   const providers = getBroadcastProviders({ config, argv });
+  const remote = send ? getRemoteBroadcasters(argv) : { broadcasters: [], token: "" };
   const gasBufferBps = BigInt(argValueFrom(argv, "--gas-buffer-bps", "12000"));
   const onPending = resolveFirstBlockOnPending(argv);
 
@@ -1164,7 +1328,8 @@ async function runFirstBlockPrebroadcast({
     broadcastAt: new Date(broadcastAt).toISOString(),
     broadcastOffsetMs,
     onPending,
-    providers: providers.map((provider) => provider.label)
+    providers: providers.map((provider) => provider.label),
+    remoteBroadcasters: remote.broadcasters.map((broadcaster) => broadcaster.label)
   });
 
   if (!send) {
@@ -1264,6 +1429,13 @@ async function runFirstBlockPrebroadcast({
         logger,
         eventName: "first_block_broadcast_prewarm"
       });
+      await prewarmRemoteBroadcasters({
+        broadcasters: remote.broadcasters,
+        timeoutMs: prewarmTimeoutMs,
+        token: remote.token,
+        logger,
+        eventName: "first_block_remote_broadcast_prewarm"
+      });
     } else {
       logger.event("first_block_broadcast_prewarm_skipped", {
         reason: "TOO_CLOSE_TO_BROADCAST",
@@ -1283,6 +1455,9 @@ async function runFirstBlockPrebroadcast({
     logger,
     eventName: "first_block_broadcast",
     broadcastRawTransactionFn,
+    remoteBroadcasters: remote.broadcasters,
+    remoteBroadcasterToken: remote.token,
+    broadcastRemoteRawTransactionFn,
     waitAll: hasFlag("--broadcast-wait-all", argv)
   });
   console.log(
@@ -1322,6 +1497,9 @@ async function runFirstBlockPrebroadcast({
           logger,
           eventName: "first_block_replacement_broadcast",
           broadcastRawTransactionFn,
+          remoteBroadcasters: remote.broadcasters,
+          remoteBroadcasterToken: remote.token,
+          broadcastRemoteRawTransactionFn,
           waitAll: hasFlag("--broadcast-wait-all", argv)
         });
       } catch (error) {
@@ -1455,6 +1633,9 @@ async function runFirstBlockPrebroadcast({
           logger,
           eventName: "first_block_cancel_broadcast",
           broadcastRawTransactionFn,
+          remoteBroadcasters: remote.broadcasters,
+          remoteBroadcasterToken: remote.token,
+          broadcastRemoteRawTransactionFn,
           waitAll: hasFlag("--broadcast-wait-all", argv)
         });
       } catch (error) {
@@ -1605,7 +1786,8 @@ export async function runLaunchExecutor({
   sleepFn = sleep,
   getTokenMetaFn = getTokenMeta,
   quoteFn = quoteInfinityCLExactInputSingle,
-  broadcastRawTransactionFn = broadcastRawTransaction
+  broadcastRawTransactionFn = broadcastRawTransaction,
+  broadcastRemoteRawTransactionFn = broadcastRemoteRawTransaction
 }) {
   const execution = getExecutionConfig(config);
   activeLogger = logger;
@@ -1746,7 +1928,8 @@ export async function runLaunchExecutor({
       sleepFn,
       getTokenMetaFn,
       quoteFn,
-      broadcastRawTransactionFn
+      broadcastRawTransactionFn,
+      broadcastRemoteRawTransactionFn
     });
     if (!firstBlockResult?.fallback) return firstBlockResult;
     logger.event("first_block_fallback_starting", {
@@ -1899,7 +2082,8 @@ export async function runLaunchExecutor({
     gasPrice: boostedGasPrice,
     argv,
     logger,
-    broadcastRawTransactionFn
+    broadcastRawTransactionFn,
+    broadcastRemoteRawTransactionFn
   });
   console.log(`Buy tx sent: ${hash}`);
   logger.event("tx_sent", { hash, sentAt: new Date(sentAt).toISOString() });
