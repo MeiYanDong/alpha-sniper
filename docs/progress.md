@@ -51,6 +51,10 @@ Last updated: `2026-05-09 09:22 CST`
   - `samples=1000`, `interval=10ms`, `warmup=250ms`,
   - `absErrorMs p50=0.345ms`, `p95=0.784ms`, `p99=0.823ms`, `max=2.714ms`.
 - AWS US West dry-run confirmed the new hot-read pressure limit: `RPC race max in-flight: chainstack-primary=4`.
+- Local broadcast rejection latency test passed with invalid raw tx `0x00`:
+  - Chainstack/Public rejected quickly,
+  - Ankr timed out on the local `eth_sendRawTransaction` rejection path,
+  - no provider accepted the invalid raw tx.
 - AWS RPC checks in both regions:
   - `rpc:check` passed for Chainstack BSC, Ankr BSC, and Ankr transaction API.
   - Public BSC fallback passed basic reads but failed narrow logs with provider limits.
@@ -86,7 +90,7 @@ Current deployment recommendation:
 
 - Keep `us-west-2` as the active test candidate.
 - Keep `ap-southeast-1` only until the user decides whether to terminate it; running both doubles EC2 hours.
-- Provider pressure control is now implemented. The next speed-only code optimization is a broadcast-response latency test for `eth_sendRawTransaction` rejection paths.
+- Provider pressure control and broadcast-response latency testing are now implemented. The next speed-only code optimization is no-key multi-region broadcaster support.
 
 ## Known Constraints
 
@@ -103,7 +107,7 @@ Current deployment recommendation:
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
 3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
-5. Add a broadcast-response latency test for `eth_sendRawTransaction` rejection paths. This should not be treated as proof of validator propagation speed, but it can expose cold provider/network delay.
+5. Compare AWS-side broadcast rejection latency against local results immediately before any new launch.
 6. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
 
 ## Implemented Improvements After Comparison
@@ -118,6 +122,7 @@ Current deployment recommendation:
 
 - Added `npm run timer:precision` to measure Node.js wake-up error for launch-time scheduling.
 - Added `scripts/aws-ssm-run.sh timer-precision` for remote instance timing checks.
+- Added `npm run broadcast:latency` and `scripts/aws-ssm-run.sh broadcast-latency` to measure `eth_sendRawTransaction` rejection-path latency with an intentionally invalid raw tx.
 
 ## Safe Operating Rule
 

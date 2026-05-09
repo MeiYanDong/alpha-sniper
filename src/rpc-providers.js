@@ -44,6 +44,7 @@ export function classifyRpcError(error) {
   if (error?.status === 429 || error?.code === 429 || /rate|quota|too many/i.test(message)) return "quota";
   if (/limit|exceed|capacity|throttle/i.test(message)) return "provider-limit";
   if (/execution reverted|revert|PoolNotStarted|Pool not started/i.test(message)) return "contract-revert";
+  if (/invalid|rlp|decode|raw transaction|signed transaction|transaction type|unmarshal/i.test(message)) return "rejected";
   if (error?.status) return `http:${error.status}`;
   if (error?.code) return `rpc:${error.code}`;
   return "network";

@@ -20,6 +20,7 @@ Commands:
   rpc-check         Run npm run rpc:check on the instance.
   rpc-race          Run npm run test:rpc-race on the instance.
   rpc-stress-short  Run a short AWS-side RPC stress ladder.
+  broadcast-latency Run invalid-raw-tx broadcast rejection latency test.
   timer-precision   Measure Node.js timer wake-up error on the instance.
   logs              Tail bootstrap and latest run-log names.
   raw -- <command>  Run an explicit shell command through SSM.
@@ -129,6 +130,9 @@ main() {
       ;;
     rpc-stress-short)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 4,8,16,32 --max-failure-pct 1 --max-p95-ms 1000"'
+      ;;
+    broadcast-latency)
+      command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run broadcast:latency -- --samples 5 --timeout-ms 3000 --prewarm"'
       ;;
     timer-precision)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250"'

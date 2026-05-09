@@ -62,6 +62,14 @@ Before the exact broadcast moment, send a cheap read to every broadcast RPC. Thi
 
 Default speed target: prewarm around 3 seconds before `broadcastAt`.
 
+Measure the provider send endpoint itself with an invalid raw transaction rejection test:
+
+```bash
+npm run broadcast:latency -- --samples 5 --timeout-ms 3000 --prewarm
+```
+
+This does not prove validator propagation speed. It only exposes slow or cold `eth_sendRawTransaction` entrypoints before launch.
+
 ### P1: Provider Pressure Control
 
 RPC race should not push every provider equally. The measured cloud boundary shows Chainstack can be very low latency but quota-sensitive, while Ankr handles more concurrency in `us-west-2`.
