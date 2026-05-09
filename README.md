@@ -239,11 +239,34 @@ Binance 现货 API、OKX 现货 API 只适合交易所订单簿下单。PancakeS
 
 OKX DEX API 可以作为备用报价/聚合交易来源，但新池刚开时不应作为第一执行路径，因为它可能还没及时收录新池或 hook 池。
 
-## 下一步
+## 当前进度
 
-1. 开盘前保持 `share:ready`、`share:cache:warm`、`rpc:stress`、`share:launch -- --preflight-only --fast-launch --multi-rpc-broadcast` 都通过。
-2. 17:50 自动预热任务启动极速模式。
-3. 开盘后 quote 成功且均价匹配才买；quote、simulation、gas 任一失败都不买。
-4. 买入成功后自动进入 exit watcher，按止损/止盈规则卖出。
+当前 SHARE 开盘窗口已经结束，项目已经转为“可复用首区块狙击模板 + AWS dry-run 部署”状态。最新进度见 [docs/progress.md](docs/progress.md)。
+
+已部署 AWS 实例：
+
+- Region: `ap-southeast-1`
+- InstanceId: `i-0d169ad4de2908544`
+- Instance type: `t3.micro`
+- Access: SSM only
+- Verified mode: first-block `DRY_RUN`
+
+远端运维统一走：
+
+```bash
+scripts/aws-ssm-run.sh status
+scripts/aws-ssm-run.sh sync
+scripts/aws-ssm-run.sh dry-run
+scripts/aws-ssm-run.sh rpc-stress-short
+```
+
+下一轮新标的的准备顺序：
+
+1. 更新 token、poolId、hook、launch time、价格 tier 和最大投入。
+2. 跑 `share:ready`、`share:cache:warm`、`rpc:check`、`test:rpc-race`、`share:launch -- --preflight-only`。
+3. 在执行机器上实测 RPC 延迟和失败率，不复用旧标的的本地网络结论。
+4. 开盘前完成买入 USDT 授权和卖出目标 token 预授权。
+5. 如果要把固定 gas 提高到 `5 gwei` 或更高，先补足 burner BNB。
+6. 真实执行必须显式使用 `--send`，否则默认只 dry-run。
 
 真实交易只能用 burner wallet，小额资金，不用主钱包。

@@ -1,8 +1,21 @@
 # AWS Deployment
 
-本地 `aws login` 当前会被 AWS SignIn 返回 `400 Bad Request` 卡住。部署改用 AWS CloudShell：CloudShell 已经继承控制台登录态，不需要本机 CLI 登录。
+当前已验证两种部署入口：
+
+- 优先：本地 AWS CLI。当前本机 `aws login` 已恢复，可以直接运行部署脚本。
+- 备用：AWS CloudShell。CloudShell 继承控制台登录态，适合本机 AWS 登录再次失效时使用。
 
 ## 推荐部署方式
+
+### 本地 AWS CLI
+
+```bash
+AWS_REGION=ap-southeast-1 bash scripts/aws-cloudshell-deploy.sh
+```
+
+脚本会从交互输入读取钱包和 RPC 参数，写入 AWS SSM Parameter Store。
+
+### CloudShell 备用路径
 
 1. 打开 AWS Console，切到 `ap-southeast-1`。
 2. 打开 CloudShell。
@@ -31,6 +44,7 @@ bash aws-cloudshell-deploy.sh
   - `ANKR_MULTICHAIN_RPC_URL`
 - 在实例上 clone `main` 分支、安装依赖、运行 `npm run check`。
 - 运行一次 first-block dry-run 验证。
+- 等待 bootstrap 完成后再运行 dry-run，避免 SSM 已在线但应用脚本还没生成的假失败。
 
 脚本不会运行真实 `--send`。
 
@@ -49,24 +63,22 @@ CloudShell 执行时会提示输入：
 
 ## 远程常用命令
 
-脚本完成后会打印 `InstanceId`。之后可以用 SSM 执行：
+脚本完成后会打印 `InstanceId`。推荐用仓库里的 SSM wrapper：
 
 ```bash
-aws ssm send-command \
-  --region ap-southeast-1 \
-  --instance-ids i-xxxxxxxxxxxxxxxxx \
-  --document-name AWS-RunShellScript \
-  --parameters commands='sudo /usr/local/bin/alpha-sniper-dry-run'
+scripts/aws-ssm-run.sh status
+scripts/aws-ssm-run.sh sync
+scripts/aws-ssm-run.sh check
+scripts/aws-ssm-run.sh rpc-check
+scripts/aws-ssm-run.sh rpc-race
+scripts/aws-ssm-run.sh rpc-stress-short
+scripts/aws-ssm-run.sh dry-run
 ```
 
-同步最新代码：
+必要时也可以直接发一条 raw shell 命令：
 
 ```bash
-aws ssm send-command \
-  --region ap-southeast-1 \
-  --instance-ids i-xxxxxxxxxxxxxxxxx \
-  --document-name AWS-RunShellScript \
-  --parameters commands='sudo /usr/local/bin/alpha-sniper-sync'
+scripts/aws-ssm-run.sh raw -- 'sudo /usr/local/bin/alpha-sniper-dry-run'
 ```
 
 真实首区块命令已经放在实例上，但不会自动执行：
@@ -93,3 +105,14 @@ bash aws-cloudshell-deploy.sh
 如果不设置 `INSTANCE_TYPE`，脚本会自动从 `INSTANCE_TYPE_CANDIDATES` 中挑一个 AWS 标记为 Free Tier eligible 的实例。只有账户明确允许非 Free Tier EC2 时，才建议手动指定其它实例类型。
 
 当前 burner BNB 余额不足以覆盖 `300000 gas * 5 gwei`，默认使用 `4.5 gwei`。补足 BNB 后可把 `DRY_RUN_GAS_GWEI` 提高。
+
+## 当前已部署实例
+
+- Region: `ap-southeast-1`
+- InstanceId: `i-0d169ad4de2908544`
+- Instance type: `t3.micro`
+- Latest verified commit: `67c7f4d`
+- Access: SSM only, no inbound ports
+- Last verified mode: first-block `DRY_RUN`
+
+更多当前状态见 [progress.md](progress.md)。
