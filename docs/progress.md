@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 11:20 CST`
+Last updated: `2026-05-09 11:22 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `2d345c8`.
+- Latest deployed commit: `9123cd1`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -103,8 +103,8 @@ Last updated: `2026-05-09 11:20 CST`
 - Stable AWS operator profile was installed and verified:
   - `alpha-sniper-operator` resolves to `arn:aws:iam::388768426712:user/alpha-sniper-operator`,
   - `scripts/aws-ssm-run.sh status` works with `AWS_PROFILE` unset, proving it auto-selected the stable profile,
-  - AWS US West was synced to `2d345c8`,
-  - remote `check` passed on `2d345c8`.
+  - AWS US West was synced to `9123cd1`,
+  - remote `check` passed on `9123cd1`.
 - Local next-step tests on `2026-05-09 10:28-10:36 CST` passed:
   - `timer:precision`: `absErrorMs p95=1.033ms`, `max=1.232ms`.
   - `rpc:stress`: Chainstack stable at `c=32`, `okRps=128.4`, `p95=310ms`; Ankr stable at `c=32`, `okRps=100.6`, `p95=564ms`.
