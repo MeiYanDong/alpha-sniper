@@ -1,6 +1,6 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 14:55 CST`
+Last updated: `2026-05-09 15:07 CST`
 
 ## Current State
 
@@ -132,6 +132,9 @@ Last updated: `2026-05-09 14:55 CST`
   - Chainstack `p50=110.9ms`, `p95=143.3ms`, accepted `0/5`,
   - Ankr `p50=33.9ms`, `p95=36.2ms`, accepted `0/5`,
   - Public BSC `p50=65.4ms`, `p95=70.2ms`, accepted `0/5`.
+- AWS US West sync to `afb9846` succeeded after adding the reusable target config generator.
+  - Local verification: `check`, `test:new-target-config`, `test:scenarios`, and `test:launch-sim` passed.
+  - Remote verification: `check` and `test:new-target-config` passed on `i-004854b92bf43622c`.
 
 ## RPC Measurement
 
