@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 09:06 CST`
+Last updated: `2026-05-09 09:22 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `32c868d`.
+- Latest deployed commit: `b5c1c02`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -46,6 +46,11 @@ Last updated: `2026-05-09 09:06 CST`
   - `300000` gas limit,
   - `4.5 gwei` fixed gas price.
 - AWS US West deploy and dry-run succeeded with the same first-block `DRY_RUN` plan.
+- AWS US West sync to `b5c1c02` succeeded; remote `check`, `test:rpc-race`, `timer-precision`, and first-block `dry-run` all passed.
+- AWS US West timer precision result on `2026-05-09 09:21 CST`:
+  - `samples=1000`, `interval=10ms`, `warmup=250ms`,
+  - `absErrorMs p50=0.345ms`, `p95=0.784ms`, `p99=0.823ms`, `max=2.714ms`.
+- AWS US West dry-run confirmed the new hot-read pressure limit: `RPC race max in-flight: chainstack-primary=4`.
 - AWS RPC checks in both regions:
   - `rpc:check` passed for Chainstack BSC, Ankr BSC, and Ankr transaction API.
   - Public BSC fallback passed basic reads but failed narrow logs with provider limits.
@@ -81,7 +86,7 @@ Current deployment recommendation:
 
 - Keep `us-west-2` as the active test candidate.
 - Keep `ap-southeast-1` only until the user decides whether to terminate it; running both doubles EC2 hours.
-- Next code optimization should add provider weighting/pressure control: do not let Chainstack receive the same pressure as Ankr in cloud runs.
+- Provider pressure control is now implemented. The next speed-only code optimization is a broadcast-response latency test for `eth_sendRawTransaction` rejection paths.
 
 ## Known Constraints
 
@@ -96,7 +101,7 @@ Current deployment recommendation:
 
 1. Create a reusable new-launch config checklist for the next token: token address, pool id, hook, launch time, price tiers, spend cap, gas budget, and sell rules.
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
-3. Measure timer precision on the intended execution instance with `npm run timer:precision` or `scripts/aws-ssm-run.sh timer-precision`.
+3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
 5. Add a broadcast-response latency test for `eth_sendRawTransaction` rejection paths. This should not be treated as proof of validator propagation speed, but it can expose cold provider/network delay.
 6. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
