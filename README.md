@@ -51,6 +51,25 @@ npm run share:cache:warm
 
 `share:cache:warm` 只缓存静态信息：token metadata 和 Infinity poolKey。价格、quote、hook started、余额、授权、gas 都不缓存，避免交易决策用旧数据。
 
+## 新标的配置
+
+下一轮不要直接手改 `config/share.json`。先用生成器把新 token 的关键字段落成独立配置文件：
+
+```bash
+npm run target:new -- --name "NEW TOKEN" --target-token 0x目标Token --pool-id 0xPoolId --hook 0xHook --launch-time 2026-05-10T18:00:00+08:00 --ideal-max-price 0.10 --max-buy-price 0.12 --max-spend-usdt 20 --ideal-spend-usdt 20 --acceptable-spend-usdt 10
+```
+
+生成器会继承 BSC、PancakeSwap、Permit2、RPC 和卖出规则等稳定配置，但会清空旧标的的 `readwiseBenchmarks`，避免 SHARE 的滑点表污染新标的判断。生成后先跑这组只读 / dry-run 检查：
+
+```bash
+npm run target:status -- --config config/new-token.json
+npm run target:cache:warm -- --config config/new-token.json
+npm run target:ready -- --config config/new-token.json
+npm run target:preflight -- --config config/new-token.json
+```
+
+如果池子的 `currency0/currency1` 顺序不是 `USDT/targetToken`，生成时显式加 `--currency0`、`--currency1`。如果已知 pool parameters，也可以加 `--pool-parameters`。
+
 开盘执行器，建议 17:50 启动；默认 dry-run，真实执行需要显式 `--send`：
 
 ```bash
@@ -275,9 +294,9 @@ AWS_REGION=us-west-2 INSTANCE_ID=i-004854b92bf43622c scripts/aws-ssm-run.sh stat
 
 下一轮新标的的准备顺序：
 
-1. 更新 token、poolId、hook、launch time、价格 tier 和最大投入。
-2. 跑 `share:ready`、`share:cache:warm`、`rpc:check`、`test:rpc-race`、`share:launch -- --preflight-only`。
-3. 在执行机器上实测 RPC 延迟和失败率，不复用旧标的的本地网络结论。
+1. 用 `npm run target:new` 生成独立配置，不手改 SHARE 配置。
+2. 跑 `target:status`、`target:cache:warm`、`target:ready`、`target:preflight`。
+3. 跑 `rpc:check`、`test:rpc-race`，并在执行机器上实测 RPC 延迟和失败率，不复用旧标的的本地网络结论。
 4. 开盘前完成买入 USDT 授权和卖出目标 token 预授权。
 5. 如果要把固定 gas 提高到 `5 gwei` 以上，先重查 burner BNB 是否覆盖目标 gas budget。
 6. 真实执行必须显式使用 `--send`，否则默认只 dry-run。

@@ -35,9 +35,12 @@ There is no "up to" sizing. The program can only buy exact `20 USDT`, exact `10 
 
 ## Pre-launch checklist
 
-- `npm run share:ready` passes spend and approval checks.
-- `npm run share:cache:warm` warms static token metadata and poolKey cache.
-- `npm run share:launch -- --preflight-only` passes without waiting for launch.
+- For SHARE, `npm run share:ready` passes spend and approval checks.
+- For a new target, generate a separate config with `npm run target:new` first; do not mutate `config/share.json` during launch pressure.
+- `npm run target:cache:warm -- --config config/<target>.json` warms static token metadata and poolKey cache.
+- `npm run target:ready -- --config config/<target>.json` passes spend and approval checks.
+- `npm run target:preflight -- --config config/<target>.json` passes without waiting for launch.
+- The generated config's `currency0/currency1`, hook, poolId, and optional pool parameters match the real poolKey.
 - USDT is approved to Permit2 before launch.
 - RPC stress test passes on Chainstack and Ankr standard BSC RPC.
 - Swap execution path is implemented and dry-run reaches the expected hook gate before launch.

@@ -177,12 +177,12 @@ Current deployment recommendation:
 
 ## Next Work
 
-1. Create a reusable new-launch config checklist for the next token: token address, pool id, hook, launch time, price tiers, spend cap, gas budget, and sell rules.
+1. Use `npm run target:new` for the next token config, then verify `currency0/currency1` and optional pool parameters against the real poolKey.
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
 3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
 5. Decide whether to expose a no-key broadcaster in a second region, and if yes, add network-level allowlisting plus token rotation before any live use.
-6. Build a reusable new-token config generator/checklist so launch-time target changes do not require manual file edits across multiple places.
+6. Keep target-specific launch config, run logs, and postmortem artifacts separate from SHARE so old benchmark data cannot leak into a new decision.
 
 ## Implemented Improvements After Comparison
 
@@ -202,6 +202,10 @@ Current deployment recommendation:
   - `--remote-broadcaster-urls` lets the signer send the same signed raw tx to remote broadcasters in parallel with local RPC broadcast.
   - `scripts/aws-ssm-run.sh broadcaster-health` validates the broadcaster health path locally on an instance.
   - `npm run test:raw-broadcaster` runs a mock-RPC integration test covering health, auth failure, invalid raw tx rejection, prewarm, and mixed success/rejection broadcast.
+- Added reusable new-target config generation:
+  - `npm run target:new` creates a standalone `config/<slug>.json` from required launch fields: token, poolId, hook, launch time, price tiers, and spend caps.
+  - `target:status`, `target:cache:warm`, `target:ready`, and `target:preflight` run the same checks against any generated config without hardcoding SHARE.
+  - Generated configs clear old `readwiseBenchmarks` by default so SHARE-specific size/price assumptions do not leak into a new token.
 
 ## Safe Operating Rule
 

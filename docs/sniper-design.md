@@ -36,6 +36,8 @@ fallback 的目标是可用性，不是最低延迟；它通常会先等主 RPC 
 
 项目缓存只缓存静态信息：token metadata 和 Infinity poolKey。动态价格、quote、hook started、余额、授权、gas 不缓存，所有交易决策都读实时链上结果。
 
+新标的必须使用独立配置。`npm run target:new` 只接受少量 launch-critical 字段：target token、poolId、hook、launch time、价格档、投入上限、可选 pool currency 顺序和 pool parameters。它继承稳定合约地址和执行规则，同时清空旧标的滑点基准，避免临盘复制 SHARE 配置时把旧数据带入新决策。
+
 首区块模式和 quote 模式是两条不同的执行路径：
 
 - quote 模式：开盘后 quote 成功，按 quote 结果算 `minOut`，simulation 通过后发送。优点是风险低，缺点是慢于开盘区块里的交易。
