@@ -44,7 +44,7 @@ For first-block mode, prefer fixed gas price:
 
 This skips the live gas price RPC read and avoids underpaying when the current gas price is too low. For small buy sizes, gas price matters more than buy amount for tx ordering.
 
-Current wallet budget note: `300000 gas * 5 gwei = 0.0015 BNB`, which is slightly above the latest observed BNB balance. Use `4.5 gwei` now, or top up BNB and raise to `5 gwei` or higher.
+Current wallet budget note: latest local preflight observed about `0.0024642891 BNB`, enough for `300000 gas * 5 gwei = 0.0015 BNB`. If raising above `5 gwei`, re-check BNB gas budget immediately before launch.
 
 ### P0: Pre-Approve Exit Before Launch
 
@@ -61,6 +61,28 @@ For current tiers, `20 USDT / 0.32 = 62.5 SHARE`, so `100 SHARE` is a practical 
 Before the exact broadcast moment, send a cheap read to every broadcast RPC. This warms DNS/TLS/provider paths and records which providers are responsive shortly before launch.
 
 Default speed target: prewarm around 3 seconds before `broadcastAt`.
+
+### P1: Provider Pressure Control
+
+RPC race should not push every provider equally. The measured cloud boundary shows Chainstack can be very low latency but quota-sensitive, while Ankr handles more concurrency in `us-west-2`.
+
+Default hot-read pressure control:
+
+```bash
+--rpc-race-max-inflight chainstack-primary=4,ankr-bsc=32
+```
+
+If Chainstack is saturated, skip it for that specific race call instead of queueing more requests into a quota-failure range. Ankr remains the high-concurrency provider.
+
+### P1: Timer Precision Check
+
+First-block mode depends on waking near `broadcastAt`. Before a launch, measure the actual Node.js timer error on the execution host:
+
+```bash
+npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250
+```
+
+If p99/max wake-up error is large, increase the broadcast offset or move execution to a quieter instance.
 
 ### P1: Cloud Region Selection
 

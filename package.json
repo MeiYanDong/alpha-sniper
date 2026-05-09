@@ -19,13 +19,14 @@
     "infinity:test-pools": "node src/find-similar-pools.js --config config/share.json",
     "rpc:check": "node src/provider-check.js",
     "rpc:stress": "node src/rpc-stress.js --config config/share.json",
+    "timer:precision": "node src/timer-precision.js",
     "data:sample": "node src/sample-state.js --config config/share.json",
     "test:scenarios": "node src/scenario-test.js --config config/share.json",
     "test:launch-sim": "node src/launch-flow-simulation.js --config config/share.json",
     "test:exit-sim": "node src/exit-watch-simulation.js --config config/share.json",
     "test:auto-flow-sim": "node src/auto-flow-simulation.js --config config/share.json",
     "test:rpc-race": "node src/rpc-race-test.js",
-    "check": "node --check src/status.js && node --check src/watch.js && node --check src/wallet-check.js && node --check src/execution-readiness.js && node --check src/cache-warm.js && node --check src/approve-permit2.js && node --check src/share-launch-executor.js && node --check src/launch-postmortem.js && node --check src/sell-readiness.js && node --check src/exit-watch.js && node --check src/execute-infinity-swap.js && node --check src/find-similar-pools.js && node --check src/provider-check.js && node --check src/rpc-stress.js && node --check src/rpc-providers.js && node --check src/rpc-race.js && node --check src/rpc-race-test.js && node --check src/project-cache.js && node --check src/sample-state.js && node --check src/scenario-test.js && node --check src/launch-flow-simulation.js && node --check src/exit-watch-simulation.js && node --check src/auto-flow-simulation.js && node --check src/decision.js && node --check src/pools.js && node --check src/infinity-swap.js && node --check src/math.js && node --check src/config.js && node --check src/env.js && node --check src/abis.js"
+    "check": "node --check src/status.js && node --check src/watch.js && node --check src/wallet-check.js && node --check src/execution-readiness.js && node --check src/cache-warm.js && node --check src/approve-permit2.js && node --check src/share-launch-executor.js && node --check src/launch-postmortem.js && node --check src/sell-readiness.js && node --check src/exit-watch.js && node --check src/execute-infinity-swap.js && node --check src/find-similar-pools.js && node --check src/provider-check.js && node --check src/rpc-stress.js && node --check src/rpc-providers.js && node --check src/rpc-race.js && node --check src/rpc-race-test.js && node --check src/timer-precision.js && node --check src/project-cache.js && node --check src/sample-state.js && node --check src/scenario-test.js && node --check src/launch-flow-simulation.js && node --check src/exit-watch-simulation.js && node --check src/auto-flow-simulation.js && node --check src/decision.js && node --check src/pools.js && node --check src/infinity-swap.js && node --check src/math.js && node --check src/config.js && node --check src/env.js && node --check src/abis.js"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

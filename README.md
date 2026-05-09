@@ -99,11 +99,12 @@ npm run share:launch -- --first-block --first-block-tier acceptable --first-bloc
 
 - `--fast-launch`：hook 轮询和买入 quote 探测并行。
 - `--rpc-race`：热读路径用 Chainstack + Ankr 标准 BSC RPC 同时读 hook、quote、gas simulation 和 gas price，先返回可用结果者胜出；`--fast-launch` 默认会打开，可用 `--no-rpc-race` 关闭。公开 RPC 不进入热读 race。
+- `--rpc-race-max-inflight chainstack-primary=4,ankr-bsc=32`：给热读 race 增加每个 provider 的并发上限。默认会把 `chainstack-primary` 限在 `4`，避免云端高并发把它打进 quota 失败档。
 - `--quote-probe-lead-ms 10000`：开盘前最后 10 秒开始直接探测 quote，quote 成功且价格匹配就进入买入路径，不只等 hook poll。
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
 - `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
 - `--gas-price-gwei-floor / --gas-price-gwei-cap / --gas-price-gwei-fixed`：给 gas price 加绝对下限、上限或固定值，避免“当前 gas 太低，2x 仍然不够”的问题。
-- `--gas-price-gwei-fixed 4.5`：首区块速度优先时推荐固定 gas price，跳过开盘前 gas price RPC 读取，并避免“当前 gas 太低，2x 仍不够”。当前钱包 BNB 余额只能覆盖约 `4.88 gwei * 300000 gas`，若补足 BNB 后可提高到 `5 gwei` 或更高。
+- `--gas-price-gwei-fixed 4.5`：首区块速度优先时推荐固定 gas price，跳过开盘前 gas price RPC 读取，并避免“当前 gas 太低，2x 仍不够”。当前最近观测的 BNB 余额约 `0.0024642891 BNB`，可覆盖 `5 gwei * 300000 gas = 0.0015 BNB`；如果提高到 `5 gwei` 以上，临盘前必须重查 gas budget。
 - `--multi-rpc-broadcast --broadcast-public`：签名一次，把同一笔 raw tx 广播到 Chainstack、Ankr 标准 BSC RPC 和公开 BSC RPC；广播默认首个 RPC 接受即返回，剩余 RPC 在后台完成并写入 run log。需要旧行为时加 `--broadcast-wait-all`。
 - `--broadcast-prewarm-ms 3000`：在广播前约 3 秒对每个广播 RPC 做轻量读，预热 DNS/TLS/provider 路径。
 - `--auto-approve-exit`：买入确认后立刻按实际收到的 SHARE 余额补卖出授权，然后才进入 exit watcher；速度优先时应改为开盘前预授权，不等买入后再授权。
@@ -201,6 +202,7 @@ npm run rpc:check
 npm run share:cache:warm
 npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 64,80,96 --max-failure-pct 1 --max-p95-ms 1000
 npm run data:sample -- --count 12 --interval-ms 5000
+npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250
 ```
 
 2026-05-08 16:54 CST 本机到 Chainstack 的实测边界：
@@ -272,7 +274,7 @@ AWS_REGION=us-west-2 INSTANCE_ID=i-004854b92bf43622c scripts/aws-ssm-run.sh stat
 2. 跑 `share:ready`、`share:cache:warm`、`rpc:check`、`test:rpc-race`、`share:launch -- --preflight-only`。
 3. 在执行机器上实测 RPC 延迟和失败率，不复用旧标的的本地网络结论。
 4. 开盘前完成买入 USDT 授权和卖出目标 token 预授权。
-5. 如果要把固定 gas 提高到 `5 gwei` 或更高，先补足 burner BNB。
+5. 如果要把固定 gas 提高到 `5 gwei` 以上，先重查 burner BNB 是否覆盖目标 gas budget。
 6. 真实执行必须显式使用 `--send`，否则默认只 dry-run。
 
 真实交易只能用 burner wallet，小额资金，不用主钱包。

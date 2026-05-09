@@ -20,6 +20,7 @@ Commands:
   rpc-check         Run npm run rpc:check on the instance.
   rpc-race          Run npm run test:rpc-race on the instance.
   rpc-stress-short  Run a short AWS-side RPC stress ladder.
+  timer-precision   Measure Node.js timer wake-up error on the instance.
   logs              Tail bootstrap and latest run-log names.
   raw -- <command>  Run an explicit shell command through SSM.
 
@@ -128,6 +129,9 @@ main() {
       ;;
     rpc-stress-short)
       command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 4,8,16,32 --max-failure-pct 1 --max-p95-ms 1000"'
+      ;;
+    timer-precision)
+      command='sudo -u alpha bash -lc "cd /opt/alpha-sniper && npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250"'
       ;;
     logs)
       command='set -e; echo "== cloud-init tail =="; tail -n 80 /var/log/cloud-init-output.log || true; echo "== latest run logs =="; find /opt/alpha-sniper/data/runs -maxdepth 1 -type f 2>/dev/null | sort | tail -10 || true'

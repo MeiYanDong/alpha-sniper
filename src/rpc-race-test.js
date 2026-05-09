@@ -144,12 +144,48 @@ async function testGasMethodsRace() {
   assert.equal(await race.getGasPrice(), 2n);
 }
 
+async function testProviderMaxInFlightShedsBusyProvider() {
+  const logger = createLogger();
+  const race = createRaceReadClientFromEntries(
+    [
+      {
+        label: "limited",
+        maxInFlight: 1,
+        client: {
+          async readContract() {
+            await sleep(30);
+            return 1n;
+          }
+        }
+      },
+      entry("fast", {
+        async readContract() {
+          await sleep(2);
+          return 2n;
+        }
+      })
+    ],
+    { logger }
+  );
+
+  const [first, second] = await Promise.all([
+    race.readContract({ functionName: "quoteExactInputSingle" }),
+    race.readContract({ functionName: "quoteExactInputSingle" })
+  ]);
+
+  assert.equal(first, 2n);
+  assert.equal(second, 2n);
+  assert.equal(logger.events.length, 2);
+  assert.equal(logger.events[0].providerMaxInFlight.limited, 1);
+}
+
 async function main() {
   await testFirstSuccessWins();
   await testPoolStartedTrueWinsOverFastFalse();
   await testPoolStartedFalseWhenNoProviderSeesStart();
   await testAllFailThrows();
   await testGasMethodsRace();
+  await testProviderMaxInFlightShedsBusyProvider();
   console.log("RPC race tests: ok");
 }
 

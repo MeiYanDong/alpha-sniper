@@ -30,7 +30,11 @@ import {
   getSafeRpcProviders,
   rawRpcCall
 } from "./rpc-providers.js";
-import { createRaceReadClient, DEFAULT_RPC_RACE_LABELS } from "./rpc-race.js";
+import {
+  createRaceReadClient,
+  DEFAULT_RPC_RACE_LABELS,
+  DEFAULT_RPC_RACE_MAX_INFLIGHT
+} from "./rpc-race.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const INCLUSIVE_PRICE_EPSILON = new Decimal("0.000000000001");
@@ -1650,6 +1654,8 @@ export async function runLaunchExecutor({
   const rpcRaceLabelsCsv =
     argValueFrom(argv, "--rpc-race-labels", DEFAULT_RPC_RACE_LABELS) || DEFAULT_RPC_RACE_LABELS;
   const rpcRaceTimeoutMs = Number(argValueFrom(argv, "--rpc-race-timeout-ms", "3000") || "3000");
+  const rpcRaceMaxInFlight =
+    argValueFrom(argv, "--rpc-race-max-inflight", DEFAULT_RPC_RACE_MAX_INFLIGHT) || "";
   let hotReadClient = client;
   let rpcRaceEnabled = false;
   let rpcRaceLabels = [];
@@ -1659,6 +1665,7 @@ export async function runLaunchExecutor({
       hotReadClient = createRaceReadClient(config, {
         labelsCsv: rpcRaceLabelsCsv,
         timeoutMs: rpcRaceTimeoutMs,
+        maxInFlightCsv: rpcRaceMaxInFlight,
         logger
       });
       rpcRaceEnabled = true;
@@ -1678,6 +1685,7 @@ export async function runLaunchExecutor({
   console.log(`Run log: ${logger.outPath}`);
   if (rpcRaceEnabled) {
     console.log(`RPC race: ${rpcRaceLabels.join(", ")} (hot hook/quote/gas reads)`);
+    if (rpcRaceMaxInFlight) console.log(`RPC race max in-flight: ${rpcRaceMaxInFlight}`);
   }
   logger.event("run_started", {
     mode: send ? "send" : "dry_run",
@@ -1688,6 +1696,7 @@ export async function runLaunchExecutor({
     rpcRaceWanted,
     rpcRaceEnabled,
     rpcRaceLabels,
+    rpcRaceMaxInFlight,
     rpcRaceTimeoutMs: rpcRaceEnabled ? rpcRaceTimeoutMs : null,
     cacheEnabled,
     cacheFile: cacheEnabled ? cache.file : null,

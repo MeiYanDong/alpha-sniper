@@ -7,6 +7,38 @@ import {
 } from "./rpc-providers.js";
 
 export const DEFAULT_RPC_RACE_LABELS = "chainstack-primary,ankr-bsc";
+export const DEFAULT_RPC_RACE_MAX_INFLIGHT = "chainstack-primary=4";
+
+function parseMaxInFlightCsv(raw) {
+  const limits = new Map();
+  for (const part of String(raw || "").split(",")) {
+    const [label, value] = part.split("=").map((item) => item?.trim());
+    if (!label || !value) continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      limits.set(label, Math.floor(parsed));
+    }
+  }
+  return limits;
+}
+
+function createInFlightLimiter(maxInFlight) {
+  if (!Number.isFinite(maxInFlight) || maxInFlight <= 0) return null;
+  let inFlight = 0;
+  return {
+    maxInFlight,
+    tryAcquire() {
+      if (inFlight >= maxInFlight) return null;
+      inFlight += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        inFlight -= 1;
+      };
+    }
+  };
+}
 
 function summarizeFailure(result) {
   return {
@@ -32,7 +64,19 @@ function createTasks(entries, runner) {
   return entries.map((entry) => {
     const startedAt = performance.now();
     return Promise.resolve()
-      .then(() => runner(entry.client))
+      .then(async () => {
+        const release = entry.limiter?.tryAcquire?.();
+        if (entry.limiter && !release) {
+          const error = new Error(`RPC race provider saturated: ${entry.label}`);
+          error.code = "PROVIDER_SATURATED";
+          throw error;
+        }
+        try {
+          return await runner(entry.client);
+        } finally {
+          release?.();
+        }
+      })
       .then((value) => ({
         ok: true,
         label: entry.label,
@@ -119,8 +163,18 @@ function raceModeForReadContract(args) {
   return args?.functionName === "isPoolStarted" ? "true_if_any" : "first_success";
 }
 
-export function createRaceReadClientFromEntries(entries, { logger } = {}) {
-  const safeEntries = entries.filter((entry) => entry?.label && entry?.client);
+export function createRaceReadClientFromEntries(entries, { logger, maxInFlightCsv = "" } = {}) {
+  const limits = parseMaxInFlightCsv(maxInFlightCsv);
+  const safeEntries = entries
+    .filter((entry) => entry?.label && entry?.client)
+    .map((entry) => {
+      const maxInFlight = entry.maxInFlight ?? limits.get(entry.label) ?? 0;
+      return {
+        ...entry,
+        maxInFlight,
+        limiter: createInFlightLimiter(maxInFlight)
+      };
+    });
   if (safeEntries.length === 0) {
     throw new Error("RPC race requires at least one provider");
   }
@@ -142,6 +196,9 @@ export function createRaceReadClientFromEntries(entries, { logger } = {}) {
         winnerLatencyMs: Math.round(result.latencyMs),
         latencyMs: Math.round(performance.now() - startedAt),
         providerLabels: safeEntries.map((entry) => entry.label),
+        providerMaxInFlight: Object.fromEntries(
+          safeEntries.filter((entry) => entry.maxInFlight > 0).map((entry) => [entry.label, entry.maxInFlight])
+        ),
         result: typeof result.value === "boolean" ? result.value : undefined
       });
       return result.value;
@@ -187,6 +244,7 @@ export function createRaceReadClientFromEntries(entries, { logger } = {}) {
 export function createRaceReadClient(config, {
   labelsCsv = DEFAULT_RPC_RACE_LABELS,
   timeoutMs = 3000,
+  maxInFlightCsv = DEFAULT_RPC_RACE_MAX_INFLIGHT,
   logger
 } = {}) {
   const providers = filterRpcProviders(
@@ -205,6 +263,6 @@ export function createRaceReadClient(config, {
         transport: http(provider.url, { timeout: timeoutMs })
       })
     })),
-    { logger }
+    { logger, maxInFlightCsv }
   );
 }

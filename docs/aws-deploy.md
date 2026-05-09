@@ -73,6 +73,7 @@ scripts/aws-ssm-run.sh check
 scripts/aws-ssm-run.sh rpc-check
 scripts/aws-ssm-run.sh rpc-race
 scripts/aws-ssm-run.sh rpc-stress-short
+scripts/aws-ssm-run.sh timer-precision
 scripts/aws-ssm-run.sh dry-run
 ```
 
@@ -112,7 +113,7 @@ AWS_REGION=us-west-2 bash scripts/aws-cloudshell-deploy.sh
 AWS_REGION=us-west-2 scripts/aws-ssm-run.sh status
 ```
 
-当前 burner BNB 余额不足以覆盖 `300000 gas * 5 gwei`，默认使用 `4.5 gwei`。补足 BNB 后可把 `DRY_RUN_GAS_GWEI` 提高。
+当前最近观测的 burner BNB 余额约 `0.0024642891 BNB`，可覆盖 `300000 gas * 5 gwei = 0.0015 BNB`。如果把 `DRY_RUN_GAS_GWEI` 提到 `5 gwei` 以上，临盘前必须重新检查 BNB gas budget。
 
 ## 当前已部署实例
 

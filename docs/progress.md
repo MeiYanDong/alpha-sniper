@@ -86,7 +86,7 @@ Current deployment recommendation:
 ## Known Constraints
 
 - SHARE launch window is already over. Current SHARE logic is useful as a proven template and test target, not as an active opportunity.
-- Burner BNB was last observed at about `0.0014642891 BNB`, enough for about `4.5 gwei * 300000 gas`, but slightly short for `5 gwei * 300000 gas`.
+- Burner BNB was last observed locally at about `0.0024642891 BNB`, enough for `5 gwei * 300000 gas = 0.0015 BNB`; still recheck before launch.
 - First-block execution can still revert if broadcast lands in a pre-open block before the hook starts. At current trade size, this gas loss is usually smaller than the operational risk of missing the block, but nonce occupation must be handled explicitly.
 - Increasing buy size does not solve first-block ordering. Gas price, pre-signing, broadcast timing, and RPC propagation matter more.
 - Public BSC RPC is useful as fallback/broadcast only. It should not be in the hot quote/read race unless paid providers are unavailable.
@@ -95,10 +95,24 @@ Current deployment recommendation:
 ## Next Work
 
 1. Create a reusable new-launch config checklist for the next token: token address, pool id, hook, launch time, price tiers, spend cap, gas budget, and sell rules.
-2. Add provider weighting or per-provider pressure control for cloud runs, so Chainstack can stay in the low-latency path without being pushed into quota failure.
-3. Decide whether to top up BNB and raise the fixed gas price above `4.5 gwei`.
-4. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
-5. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
+2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
+3. Measure timer precision on the intended execution instance with `npm run timer:precision` or `scripts/aws-ssm-run.sh timer-precision`.
+4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
+5. Add a broadcast-response latency test for `eth_sendRawTransaction` rejection paths. This should not be treated as proof of validator propagation speed, but it can expose cold provider/network delay.
+6. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
+
+## Implemented Improvements After Comparison
+
+- `rpc-race` now supports per-provider max in-flight limits.
+- Default race limit is `chainstack-primary=4`, so cloud runs do not push Chainstack into the quota-failure range observed in Singapore.
+- Override with:
+
+```bash
+--rpc-race-max-inflight chainstack-primary=4,ankr-bsc=32
+```
+
+- Added `npm run timer:precision` to measure Node.js wake-up error for launch-time scheduling.
+- Added `scripts/aws-ssm-run.sh timer-precision` for remote instance timing checks.
 
 ## Safe Operating Rule
 

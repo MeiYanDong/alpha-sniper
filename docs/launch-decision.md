@@ -88,7 +88,7 @@ With `--first-block`, the executor changes execution model:
 - It broadcasts at `launchTime + --first-block-broadcast-offset-ms`, defaulting to `-150ms`.
 - It uses fixed `--first-block-gas-limit` because pre-open gas simulation reverts on the hook.
 - It should use `--gas-price-gwei-fixed` for the speed path, so launch does not wait on a live gas price read.
-- Current wallet balance covers `4.5 gwei * 300000 gas`; using `5 gwei` needs a small BNB top-up because `300000 * 5 gwei = 0.0015 BNB`.
+- Latest local preflight observed about `0.0024642891 BNB`, enough for `5 gwei * 300000 gas = 0.0015 BNB`; if raising above `5 gwei`, re-check BNB gas budget immediately before launch.
 - It prewarms broadcast RPCs before the broadcast moment unless `--no-broadcast-prewarm` is provided.
 - If the first-block transaction reverts and the receipt is available, it can fall back to the quote-based safe path.
 - If the first-block transaction is still pending, do not send a second buy with uncertain nonce state.
