@@ -369,7 +369,7 @@ run_ssm_command() {
     --instance-ids "$instance_id" \
     --document-name AWS-RunShellScript \
     --comment "$comment" \
-    --parameters commands="$command" \
+    --parameters "$(jq -nc --arg c "$command" '{commands:[$c]}')" \
     --query 'Command.CommandId' \
     --output text)"
 
