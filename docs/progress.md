@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 09:22 CST`
+Last updated: `2026-05-09 09:28 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `b5c1c02`.
+- Latest deployed commit: `74ae9ae`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -55,6 +55,11 @@ Last updated: `2026-05-09 09:22 CST`
   - Chainstack/Public rejected quickly,
   - Ankr timed out on the local `eth_sendRawTransaction` rejection path,
   - no provider accepted the invalid raw tx.
+- AWS US West sync to `74ae9ae` succeeded; remote `check`, `broadcast:latency`, and first-block `dry-run` passed.
+- AWS US West broadcast rejection latency with invalid raw tx `0x00`:
+  - Chainstack: `p50=130.8ms`, `p95=185.9ms`, accepted `0/5`,
+  - Ankr: timed out on all `5/5` samples,
+  - Public BSC: `p50=60.9ms`, `p95=62.3ms`, accepted `0/5`.
 - AWS RPC checks in both regions:
   - `rpc:check` passed for Chainstack BSC, Ankr BSC, and Ankr transaction API.
   - Public BSC fallback passed basic reads but failed narrow logs with provider limits.
@@ -107,7 +112,7 @@ Current deployment recommendation:
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
 3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
-5. Compare AWS-side broadcast rejection latency against local results immediately before any new launch.
+5. Investigate whether Ankr's `eth_sendRawTransaction` timeout is specific to invalid raw tx handling or also affects valid signed tx acceptance.
 6. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
 
 ## Implemented Improvements After Comparison
