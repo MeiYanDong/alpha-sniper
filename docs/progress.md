@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 11:22 CST`
+Last updated: `2026-05-09 14:55 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `9123cd1`.
+- Latest deployed commit: `8c9465f`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -105,6 +105,17 @@ Last updated: `2026-05-09 11:22 CST`
   - `scripts/aws-ssm-run.sh status` works with `AWS_PROFILE` unset, proving it auto-selected the stable profile,
   - AWS US West was synced to `9123cd1`,
   - remote `check` passed on `9123cd1`.
+- Stable-profile full AWS US West regression on `2026-05-09 14:53-14:55 CST` passed with `AWS_PROFILE` unset:
+  - synced remote instance to `8c9465f`,
+  - `status` confirmed `8c9465f`,
+  - `check` passed,
+  - first-block `dry-run` passed with wallet `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`, `BNB=0.0024642891`, `USDT=20.59401315`, `SHARE=0`,
+  - dry-run confirmed `RPC race max in-flight: chainstack-primary=4,ankr-bsc=32`,
+  - `raw-broadcaster-test` passed,
+  - `timer-precision`: `absErrorMs p50=0.320ms`, `p95=0.779ms`, `p99=1.008ms`, `max=5.603ms`,
+  - `rpc-stress-short`: Chainstack stable at `c=16`, `okRps=128.0`, `p95=203ms`; first bad `c=32`, fail `10.27%`,
+  - `rpc-stress-short`: Ankr stable at `c=32`, `okRps=659.6`, `p95=124ms`,
+  - `broadcast-latency-signed`: Chainstack `p95=148.0ms`, Ankr `p95=36.9ms`, Public BSC `p95=71.0ms`, accepted `0/15`.
 - Local next-step tests on `2026-05-09 10:28-10:36 CST` passed:
   - `timer:precision`: `absErrorMs p95=1.033ms`, `max=1.232ms`.
   - `rpc:stress`: Chainstack stable at `c=32`, `okRps=128.4`, `p95=310ms`; Ankr stable at `c=32`, `okRps=100.6`, `p95=564ms`.
