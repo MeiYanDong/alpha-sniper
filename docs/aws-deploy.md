@@ -116,11 +116,9 @@ AWS_REGION=us-west-2 scripts/aws-ssm-run.sh status
 
 ## 当前已部署实例
 
-- Region: `ap-southeast-1`
-- InstanceId: `i-0d169ad4de2908544`
-- Instance type: `t3.micro`
-- Latest verified commit: `67c7f4d`
-- Access: SSM only, no inbound ports
+- Singapore: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM only, no inbound ports.
+- US West: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM only, no inbound ports.
+- Latest verified commit: `32c868d`
 - Last verified mode: first-block `DRY_RUN`
 
 更多当前状态见 [progress.md](progress.md)。

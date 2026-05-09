@@ -1,13 +1,13 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 08:29 CST`
+Last updated: `2026-05-09 09:06 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `67c7f4d`.
-- AWS region: `ap-southeast-1`.
-- AWS instance: `i-0d169ad4de2908544`, `t3.micro`, SSM-only, no inbound ports.
+- Latest deployed commit: `32c868d`.
+- AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
+- AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
 - Runtime secrets live in AWS SSM Parameter Store under `/alpha-sniper/env/*`.
 - Current mode is verified dry-run only. No live `--send` command has been run from AWS.
@@ -29,50 +29,59 @@ Last updated: `2026-05-09 08:29 CST`
   - pre-signs replacement/cancel transactions for pending handling.
 - Added postmortem tooling for run-log and opening-block analysis.
 - Added AWS deployment script with Free Tier eligible instance selection.
+- Added region-isolated AWS role/profile/security group names for parallel region tests.
 - Fixed AWS deployment race by waiting for app bootstrap before remote dry-run.
 - Fixed AWS SSM IAM policy so the instance can read both `/alpha-sniper/env` and children.
+- Fixed AWS deploy SSM command parameter encoding for shell commands containing brackets.
 
 ## Verified
 
 - Local `npm run check` passed.
 - AWS bootstrap ran `npm ci` and `npm run check` successfully.
-- AWS final sync reached commit `67c7f4d`.
-- AWS dry-run succeeded with:
+- AWS Singapore dry-run succeeded with:
   - wallet `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`,
   - `Mode: DRY_RUN`,
   - first-block acceptable tier,
   - `10 USDT` planned buy,
   - `300000` gas limit,
   - `4.5 gwei` fixed gas price.
-- AWS RPC checks:
+- AWS US West deploy and dry-run succeeded with the same first-block `DRY_RUN` plan.
+- AWS RPC checks in both regions:
   - `rpc:check` passed for Chainstack BSC, Ankr BSC, and Ankr transaction API.
   - Public BSC fallback passed basic reads but failed narrow logs with provider limits.
   - `test:rpc-race` passed.
 
-## AWS RPC Measurement
+## RPC Measurement
 
-Measured from `i-0d169ad4de2908544` in `ap-southeast-1` on `2026-05-09`.
+Measured on `2026-05-09` with identical parameters:
 
-Short stress with `steps=4,8,16,32`, `duration=5000ms`, `timeout=3000ms`, calls `eth_blockNumber,getSlot0,getLiquidity,isPoolStarted`:
+- `duration=10000ms`
+- `timeout=3000ms`
+- `steps=1,2,4,8,16,32`
+- calls: `eth_blockNumber,getSlot0,getLiquidity,isPoolStarted`
+- stable boundary: failure `<=1%` and `p95<=1000ms`
 
-| Provider | Stable step | p50 | p95 | Failure | Note |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Chainstack primary | `c=4` | `20ms` | `30ms` | `0.00%` | Very low latency, but quota fails at `c=8`. |
-| Ankr BSC | `c=32` | `29ms` | `325ms` | `0.00%` | Higher p95 than Chainstack at low load, but much better AWS-side concurrency. |
-
-Chainstack first bad step from AWS:
-
-- `c=8`: `33.67%` quota failures, while p95 stayed low at `29ms`.
-
-Ankr higher-concurrency spot check:
-
-- `c=64`: `0.00%` failures, `p95=240ms`, `okRps=722.0`.
+| Location | Provider | Stable step | p50 at stable | p95 at stable | First bad step | Note |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Local Mac | Chainstack | `c=32` | `246ms` | `288ms` | none tested | Stable but much slower than cloud low-latency paths. |
+| Local Mac | Ankr | `c=4` | `237ms` | `541ms` | `c=8`, p95 `1487ms` | No failures, but tail latency breaks at `c=8`. |
+| AWS Singapore | Chainstack | `c=4` | `18ms` | `25ms` | `c=8`, fail `37.20%` | Lowest low-concurrency latency, strict quota ceiling. |
+| AWS Singapore | Ankr | `c=32` | `29ms` | `177ms` | none tested | Good cloud high-concurrency path. |
+| AWS US West | Chainstack | `c=16` | `105ms` | `129ms` | `c=32`, fail `10.64%` | More concurrency headroom than Singapore, slower than Singapore at low c. |
+| AWS US West | Ankr | `c=32` | `39ms` | `63ms` | none tested | Best overall result for high-concurrency hot reads. |
 
 Operational conclusion:
 
-- On the AWS instance, Chainstack should be treated as a low-concurrency, low-latency read source.
-- On the AWS instance, Ankr is the safer high-concurrency provider.
-- Do not blindly reuse the earlier local Mac Chainstack boundary for cloud execution. Provider limits are execution-location dependent.
+- `us-west-2` is currently the best candidate for primary execution because Ankr is both fast and stable there.
+- `ap-southeast-1` Chainstack is still the fastest low-concurrency read path, but quota breaks hard at `c=8`.
+- Local Mac is acceptable for development and safety checks, not for first-block speed.
+- Provider behavior is location-dependent. Re-run this test near any real launch.
+
+Current deployment recommendation:
+
+- Keep `us-west-2` as the active test candidate.
+- Keep `ap-southeast-1` only until the user decides whether to terminate it; running both doubles EC2 hours.
+- Next code optimization should add provider weighting/pressure control: do not let Chainstack receive the same pressure as Ankr in cloud runs.
 
 ## Known Constraints
 
@@ -81,7 +90,7 @@ Operational conclusion:
 - First-block execution can still revert if broadcast lands in a pre-open block before the hook starts. At current trade size, this gas loss is usually smaller than the operational risk of missing the block, but nonce occupation must be handled explicitly.
 - Increasing buy size does not solve first-block ordering. Gas price, pre-signing, broadcast timing, and RPC propagation matter more.
 - Public BSC RPC is useful as fallback/broadcast only. It should not be in the hot quote/read race unless paid providers are unavailable.
-- Multi-region broadcasting is not implemented yet. The current architecture is one AWS signer instance with multi-RPC broadcast.
+- Multi-region broadcasting is not implemented yet. The current architecture is one signer instance per deployed region with multi-RPC broadcast. Do not run live sends from both regions for the same wallet at the same time.
 
 ## Next Work
 
