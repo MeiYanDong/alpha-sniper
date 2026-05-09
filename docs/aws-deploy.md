@@ -1,9 +1,10 @@
 # AWS Deployment
 
-当前已验证两种部署入口：
+当前已验证两种部署入口，另有一条更稳定的日常测试认证路径：
 
 - 优先：本地 AWS CLI。当前本机 `aws login` 已恢复，可以直接运行部署脚本。
 - 备用：AWS CloudShell。CloudShell 继承控制台登录态，适合本机 AWS 登录再次失效时使用。
+- 日常测试：`alpha-sniper-operator` 低权限 profile。它只用于 SSM 远端操作，不读取私钥/RPC secret，也不创建云资源。详见 [aws-auth.md](aws-auth.md)。
 
 ## 推荐部署方式
 
@@ -79,6 +80,13 @@ scripts/aws-ssm-run.sh broadcast-latency-signed
 scripts/aws-ssm-run.sh broadcaster-health
 scripts/aws-ssm-run.sh timer-precision
 scripts/aws-ssm-run.sh dry-run
+```
+
+`scripts/aws-ssm-run.sh` 会自动优先使用本机 `alpha-sniper-operator` profile；这个 profile 不存在时，才回落到当前 shell 的 `AWS_PROFILE` 或 `default`。稳定 profile 的安装和检查见：
+
+```bash
+scripts/aws-stable-operator-profile.sh doctor
+scripts/aws-stable-operator-profile.sh install
 ```
 
 必要时也可以直接发一条 raw shell 命令：

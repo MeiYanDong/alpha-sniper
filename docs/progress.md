@@ -1,6 +1,6 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 10:36 CST`
+Last updated: `2026-05-09 10:55 CST`
 
 ## Current State
 
@@ -34,6 +34,10 @@ Last updated: `2026-05-09 10:36 CST`
   - signer can send the same raw tx to remote broadcasters with `--remote-broadcaster-urls`.
 - Added AWS deployment script with Free Tier eligible instance selection.
 - Added region-isolated AWS role/profile/security group names for parallel region tests.
+- Added stable low-permission AWS operator profile support for daily SSM testing:
+  - `scripts/aws-stable-operator-profile.sh` can create/check `alpha-sniper-operator`,
+  - `scripts/aws-ssm-run.sh` auto-prefers that profile when present,
+  - the operator policy can send SSM commands and read command results, but does not read private key or RPC secrets.
 - Fixed AWS deployment race by waiting for app bootstrap before remote dry-run.
 - Fixed AWS SSM IAM policy so the instance can read both `/alpha-sniper/env` and children.
 - Fixed AWS deploy SSM command parameter encoding for shell commands containing brackets.
@@ -153,6 +157,7 @@ Current deployment recommendation:
 - Increasing buy size does not solve first-block ordering. Gas price, pre-signing, broadcast timing, and RPC propagation matter more.
 - Public BSC RPC is useful as fallback/broadcast only. It should not be in the hot quote/read race unless paid providers are unavailable.
 - Multi-region remote broadcaster support is code-complete but not externally exposed or production-wired. The current deployed instances still have no inbound ports. Do not run live sends from two signer instances for the same wallet at the same time.
+- The current `default` AWS CLI login session can expire. For repeated AWS testing, use the stable `alpha-sniper-operator` profile path in [aws-auth.md](aws-auth.md).
 
 ## Next Work
 

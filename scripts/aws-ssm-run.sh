@@ -6,6 +6,7 @@ REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-southeast-1}}"
 INSTANCE_ID="${INSTANCE_ID:-}"
 POLL_SECONDS="${POLL_SECONDS:-5}"
 MAX_POLLS="${MAX_POLLS:-120}"
+OPERATOR_PROFILE="${AWS_OPERATOR_PROFILE:-alpha-sniper-operator}"
 
 usage() {
   cat <<'USAGE'
@@ -31,6 +32,7 @@ Commands:
 Env:
   AWS_REGION=ap-southeast-1
   INSTANCE_ID=i-...
+  AWS_PROFILE=alpha-sniper-operator
 USAGE
 }
 
@@ -39,6 +41,32 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   }
+}
+
+select_default_profile() {
+  if [[ -n "${AWS_PROFILE:-}" ]]; then
+    return 0
+  fi
+
+  if aws configure get aws_access_key_id --profile "$OPERATOR_PROFILE" >/dev/null 2>&1; then
+    export AWS_PROFILE="$OPERATOR_PROFILE"
+  fi
+}
+
+check_aws_auth() {
+  local error
+  if error="$(aws sts get-caller-identity --region "$REGION" --output json 2>&1 >/dev/null)"; then
+    return 0
+  fi
+
+  echo "AWS auth is not available for profile: ${AWS_PROFILE:-default}" >&2
+  if grep -qi "expired" <<<"$error"; then
+    echo "Current AWS CLI session expired." >&2
+    echo "Use scripts/aws-stable-operator-profile.sh install once to create a stable low-permission profile." >&2
+  else
+    echo "$error" >&2
+  fi
+  exit 1
 }
 
 resolve_instance_id() {
@@ -106,6 +134,9 @@ main() {
   fi
 
   local instance_id command
+  select_default_profile
+  check_aws_auth
+
   instance_id="$(resolve_instance_id)"
   if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
     echo "No $APP_NAME EC2 instance found in $REGION." >&2
