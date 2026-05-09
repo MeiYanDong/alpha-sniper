@@ -121,7 +121,7 @@ AWS_REGION=us-west-2 scripts/aws-ssm-run.sh status
 
 - Singapore: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM only, no inbound ports.
 - US West: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM only, no inbound ports.
-- Latest verified commit: `74ae9ae`
+- Latest verified commit: `4e5df8e`
 - Last verified mode: first-block `DRY_RUN`
 
 更多当前状态见 [progress.md](progress.md)。

@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 09:28 CST`
+Last updated: `2026-05-09 09:31 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `74ae9ae`.
+- Latest deployed commit: `4e5df8e`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -60,6 +60,12 @@ Last updated: `2026-05-09 09:28 CST`
   - Ankr `p95=253.3ms`,
   - Public BSC `p95=254.2ms`,
   - no provider accepted the zero-balance signed tx.
+- AWS US West sync to `4e5df8e` succeeded; remote `check`, `broadcast-latency-signed`, and first-block `dry-run` passed.
+- AWS US West zero-balance signed broadcast rejection latency:
+  - Chainstack: `p50=111.2ms`, `p95=166.1ms`, accepted `0/5`,
+  - Ankr: `p50=35.8ms`, `p95=36.8ms`, accepted `0/5`,
+  - Public BSC: `p50=61.0ms`, `p95=61.9ms`, accepted `0/5`.
+- Conclusion: Ankr timeout was specific to malformed invalid raw tx handling. For real-format signed tx entry testing, Ankr is currently the fastest us-west-2 broadcast endpoint.
 - AWS US West sync to `74ae9ae` succeeded; remote `check`, `broadcast:latency`, and first-block `dry-run` passed.
 - AWS US West broadcast rejection latency with invalid raw tx `0x00`:
   - Chainstack: `p50=130.8ms`, `p95=185.9ms`, accepted `0/5`,
@@ -91,7 +97,7 @@ Measured on `2026-05-09` with identical parameters:
 
 Operational conclusion:
 
-- `us-west-2` is currently the best candidate for primary execution because Ankr is both fast and stable there.
+- `us-west-2` is currently the best candidate for primary execution because Ankr is both fast and stable there, including the zero-balance signed broadcast rejection path.
 - `ap-southeast-1` Chainstack is still the fastest low-concurrency read path, but quota breaks hard at `c=8`.
 - Local Mac is acceptable for development and safety checks, not for first-block speed.
 - Provider behavior is location-dependent. Re-run this test near any real launch.
@@ -117,8 +123,8 @@ Current deployment recommendation:
 2. Re-run AWS-side RPC stress immediately before any new launch, because provider limits can change.
 3. Re-run timer precision on the intended execution instance immediately before any new launch.
 4. Decide whether to raise the fixed gas price above `4.5 gwei`; current observed BNB can cover `5 gwei * 300000 gas`, but higher settings need a fresh budget check.
-5. Investigate whether Ankr's `eth_sendRawTransaction` timeout is specific to invalid raw tx handling or also affects valid signed tx acceptance.
-6. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
+5. For a later speed tier, add no-key multi-region broadcasters that only receive one pre-signed raw transaction from the single signer.
+6. Build a reusable new-token config generator/checklist so launch-time target changes do not require manual file edits across multiple places.
 
 ## Implemented Improvements After Comparison
 
