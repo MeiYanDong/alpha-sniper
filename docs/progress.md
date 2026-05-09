@@ -1,11 +1,11 @@
 # Alpha Sniper Progress
 
-Last updated: `2026-05-09 09:48 CST`
+Last updated: `2026-05-09 10:36 CST`
 
 ## Current State
 
 - Repo: `MeiYanDong/alpha-sniper`, branch `main`.
-- Latest deployed commit: `f7a0621`.
+- Latest deployed commit: `e518054`.
 - AWS Singapore instance: `i-0d169ad4de2908544`, `ap-southeast-1`, `t3.micro`, SSM-only, no inbound ports.
 - AWS US West instance: `i-004854b92bf43622c`, `us-west-2`, `t3.micro`, SSM-only, no inbound ports.
 - Runtime wallet: `0xE4447c32C25936e8e800329F3Fe7112AB2582E3b`.
@@ -96,6 +96,22 @@ Last updated: `2026-05-09 09:48 CST`
   - `rpc:check` passed for Chainstack BSC, Ankr BSC, and Ankr transaction API.
   - Public BSC fallback passed basic reads but failed narrow logs with provider limits.
   - `test:rpc-race` passed.
+- Local next-step tests on `2026-05-09 10:28-10:36 CST` passed:
+  - `timer:precision`: `absErrorMs p95=1.033ms`, `max=1.232ms`.
+  - `rpc:stress`: Chainstack stable at `c=32`, `okRps=128.4`, `p95=310ms`; Ankr stable at `c=32`, `okRps=100.6`, `p95=564ms`.
+  - `broadcast:latency` invalid raw tx: Chainstack/Public rejected, Ankr timed out on malformed raw handling, accepted `0/15`.
+  - `broadcast:latency --mode zero-balance-signed`: Chainstack `p95=581.5ms`, Ankr `p95=238.2ms`, Public `p95=330.2ms`, accepted `0/15`.
+- AWS US West sync to `e518054` succeeded; remote `check`, `raw-broadcaster-test`, and first-block `dry-run` passed.
+- AWS US West first-block dry-run confirmed the new default hot-read pressure limit: `RPC race max in-flight: chainstack-primary=4,ankr-bsc=32`.
+- AWS US West timer precision latest result:
+  - `absErrorMs p50=0.288ms`, `p95=0.726ms`, `p99=1.516ms`, `max=1.544ms`.
+- AWS US West latest RPC stress:
+  - Chainstack stable at `c=16`, `okRps=144.4`, `p95=161ms`; first bad `c=32`, fail `9.85%`.
+  - Ankr stable at `c=32`, `okRps=672.2`, `p95=70ms`.
+- AWS US West latest signed broadcast rejection latency:
+  - Chainstack `p50=110.9ms`, `p95=143.3ms`, accepted `0/5`,
+  - Ankr `p50=33.9ms`, `p95=36.2ms`, accepted `0/5`,
+  - Public BSC `p50=65.4ms`, `p95=70.2ms`, accepted `0/5`.
 
 ## RPC Measurement
 
@@ -109,12 +125,12 @@ Measured on `2026-05-09` with identical parameters:
 
 | Location | Provider | Stable step | p50 at stable | p95 at stable | First bad step | Note |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| Local Mac | Chainstack | `c=32` | `246ms` | `288ms` | none tested | Stable but much slower than cloud low-latency paths. |
-| Local Mac | Ankr | `c=4` | `237ms` | `541ms` | `c=8`, p95 `1487ms` | No failures, but tail latency breaks at `c=8`. |
+| Local Mac | Chainstack | `c=32` | `246ms` | `310ms` | none tested | Stable but much slower than cloud low-latency paths. |
+| Local Mac | Ankr | `c=32` | `238ms` | `564ms` | none tested in latest short run | Slower than AWS, acceptable only for development and safety checks. |
 | AWS Singapore | Chainstack | `c=4` | `18ms` | `25ms` | `c=8`, fail `37.20%` | Lowest low-concurrency latency, strict quota ceiling. |
 | AWS Singapore | Ankr | `c=32` | `29ms` | `177ms` | none tested | Good cloud high-concurrency path. |
-| AWS US West | Chainstack | `c=16` | `105ms` | `129ms` | `c=32`, fail `10.64%` | More concurrency headroom than Singapore, slower than Singapore at low c. |
-| AWS US West | Ankr | `c=32` | `39ms` | `63ms` | none tested | Best overall result for high-concurrency hot reads. |
+| AWS US West | Chainstack | `c=16` | `99ms` | `161ms` | `c=32`, fail `9.85%` | More concurrency headroom than Singapore, still quota-sensitive at high c. |
+| AWS US West | Ankr | `c=32` | `44ms` | `70ms` | none tested | Best overall result for high-concurrency hot reads. |
 
 Operational conclusion:
 
@@ -150,7 +166,7 @@ Current deployment recommendation:
 ## Implemented Improvements After Comparison
 
 - `rpc-race` now supports per-provider max in-flight limits.
-- Default race limit is `chainstack-primary=4`, so cloud runs do not push Chainstack into the quota-failure range observed in Singapore.
+- Default race limit is `chainstack-primary=4,ankr-bsc=32`, so cloud runs do not push Chainstack into the quota-failure range and still cap Ankr at the validated high-concurrency boundary.
 - Override with:
 
 ```bash
