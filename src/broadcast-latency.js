@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { parseGwei } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { loadConfigFromArgs } from "./config.js";
 import {
   classifyRpcError,
@@ -7,6 +10,7 @@ import {
 } from "./rpc-providers.js";
 
 const INVALID_RAW_TX = "0x00";
+const BSC_CHAIN_ID = 56;
 
 function getArg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -38,6 +42,36 @@ function summarizeLatencies(latencies) {
   };
 }
 
+async function buildRawTx({ mode, gasPriceGwei }) {
+  if (mode === "invalid") {
+    return {
+      rawTx: INVALID_RAW_TX,
+      description: "invalid raw tx 0x00",
+      safety: "expected result is provider rejection, not chain inclusion"
+    };
+  }
+
+  if (mode === "zero-balance-signed") {
+    const privateKey = `0x${randomBytes(32).toString("hex")}`;
+    const account = privateKeyToAccount(privateKey);
+    const rawTx = await account.signTransaction({
+      chainId: BSC_CHAIN_ID,
+      to: account.address,
+      value: 1n,
+      nonce: 0,
+      gas: 21_000n,
+      gasPrice: parseGwei(String(gasPriceGwei))
+    });
+    return {
+      rawTx,
+      description: `zero-balance signed tx from ephemeral ${account.address}`,
+      safety: "uses a random one-time wallet with no funds; expected result is insufficient-funds rejection"
+    };
+  }
+
+  throw new Error(`Unsupported broadcast latency mode: ${mode}`);
+}
+
 function printSummary(label, result) {
   const latency = summarizeLatencies(result.latencies);
   console.log(
@@ -66,7 +100,7 @@ async function timedRpc(provider, method, params, timeoutMs) {
   }
 }
 
-async function testProvider(provider, { samples, timeoutMs, prewarm }) {
+async function testProvider(provider, { samples, timeoutMs, prewarm, rawTx }) {
   if (prewarm) {
     await timedRpc(provider, "eth_blockNumber", [], timeoutMs);
   }
@@ -80,7 +114,7 @@ async function testProvider(provider, { samples, timeoutMs, prewarm }) {
   };
 
   for (let index = 0; index < samples; index += 1) {
-    const response = await timedRpc(provider, "eth_sendRawTransaction", [INVALID_RAW_TX], timeoutMs);
+    const response = await timedRpc(provider, "eth_sendRawTransaction", [rawTx], timeoutMs);
     result.latencies.push(response.latencyMs);
     if (response.ok) {
       result.accepted += 1;
@@ -100,6 +134,8 @@ async function main() {
   const config = loadConfigFromArgs();
   const samples = Math.floor(toPositiveNumber(getArg("--samples", "5"), 5));
   const timeoutMs = toPositiveNumber(getArg("--timeout-ms", "3000"), 3_000);
+  const mode = getArg("--mode", "invalid");
+  const gasPriceGwei = toPositiveNumber(getArg("--gas-price-gwei", "1"), 1);
   const includePublic = !hasFlag("--no-public");
   const prewarm = hasFlag("--prewarm");
   const providers = filterRpcProviders(
@@ -111,13 +147,15 @@ async function main() {
     throw new Error("No RPC providers available for broadcast latency test");
   }
 
+  const tx = await buildRawTx({ mode, gasPriceGwei });
+
   console.log(
-    `Broadcast rejection latency: samples=${samples} timeout=${timeoutMs}ms prewarm=${prewarm ? "yes" : "no"} rawTx=invalid`
+    `Broadcast rejection latency: samples=${samples} timeout=${timeoutMs}ms prewarm=${prewarm ? "yes" : "no"} mode=${mode}`
   );
-  console.log("Safety: uses intentionally invalid raw tx 0x00; expected result is provider rejection, not chain inclusion.");
+  console.log(`Safety: ${tx.description}; ${tx.safety}.`);
 
   for (const provider of providers) {
-    printSummary(provider.label, await testProvider(provider, { samples, timeoutMs, prewarm }));
+    printSummary(provider.label, await testProvider(provider, { samples, timeoutMs, prewarm, rawTx: tx.rawTx }));
   }
 }
 

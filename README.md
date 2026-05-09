@@ -202,6 +202,7 @@ npm run rpc:check
 npm run share:cache:warm
 npm run rpc:stress -- --duration-ms 5000 --timeout-ms 3000 --steps 64,80,96 --max-failure-pct 1 --max-p95-ms 1000
 npm run broadcast:latency -- --samples 5 --timeout-ms 3000 --prewarm
+npm run broadcast:latency -- --mode zero-balance-signed --samples 5 --timeout-ms 3000 --prewarm
 npm run data:sample -- --count 12 --interval-ms 5000
 npm run timer:precision -- --samples 1000 --interval-ms 10 --warmup-ms 250
 ```

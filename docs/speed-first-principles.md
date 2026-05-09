@@ -66,9 +66,10 @@ Measure the provider send endpoint itself with an invalid raw transaction reject
 
 ```bash
 npm run broadcast:latency -- --samples 5 --timeout-ms 3000 --prewarm
+npm run broadcast:latency -- --mode zero-balance-signed --samples 5 --timeout-ms 3000 --prewarm
 ```
 
-This does not prove validator propagation speed. It only exposes slow or cold `eth_sendRawTransaction` entrypoints before launch.
+The invalid raw tx mode catches provider oddities in malformed input handling. The zero-balance signed mode is closer to a real signed transaction acceptance/rejection path without using the runtime wallet or spendable funds. Neither proves validator propagation speed, but both expose slow or cold `eth_sendRawTransaction` entrypoints before launch.
 
 ### P1: Provider Pressure Control
 

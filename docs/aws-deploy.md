@@ -74,6 +74,7 @@ scripts/aws-ssm-run.sh rpc-check
 scripts/aws-ssm-run.sh rpc-race
 scripts/aws-ssm-run.sh rpc-stress-short
 scripts/aws-ssm-run.sh broadcast-latency
+scripts/aws-ssm-run.sh broadcast-latency-signed
 scripts/aws-ssm-run.sh timer-precision
 scripts/aws-ssm-run.sh dry-run
 ```

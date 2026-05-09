@@ -55,6 +55,11 @@ Last updated: `2026-05-09 09:28 CST`
   - Chainstack/Public rejected quickly,
   - Ankr timed out on the local `eth_sendRawTransaction` rejection path,
   - no provider accepted the invalid raw tx.
+- Local zero-balance signed broadcast rejection test also passed:
+  - Chainstack `p95=593.2ms`,
+  - Ankr `p95=253.3ms`,
+  - Public BSC `p95=254.2ms`,
+  - no provider accepted the zero-balance signed tx.
 - AWS US West sync to `74ae9ae` succeeded; remote `check`, `broadcast:latency`, and first-block `dry-run` passed.
 - AWS US West broadcast rejection latency with invalid raw tx `0x00`:
   - Chainstack: `p50=130.8ms`, `p95=185.9ms`, accepted `0/5`,
@@ -127,7 +132,7 @@ Current deployment recommendation:
 
 - Added `npm run timer:precision` to measure Node.js wake-up error for launch-time scheduling.
 - Added `scripts/aws-ssm-run.sh timer-precision` for remote instance timing checks.
-- Added `npm run broadcast:latency` and `scripts/aws-ssm-run.sh broadcast-latency` to measure `eth_sendRawTransaction` rejection-path latency with an intentionally invalid raw tx.
+- Added `npm run broadcast:latency` plus `scripts/aws-ssm-run.sh broadcast-latency` / `broadcast-latency-signed` to measure `eth_sendRawTransaction` rejection-path latency with invalid raw tx and zero-balance signed tx modes.
 
 ## Safe Operating Rule
 
