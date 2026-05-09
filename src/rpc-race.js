@@ -7,7 +7,7 @@ import {
 } from "./rpc-providers.js";
 
 export const DEFAULT_RPC_RACE_LABELS = "chainstack-primary,ankr-bsc";
-export const DEFAULT_RPC_RACE_MAX_INFLIGHT = "chainstack-primary=4";
+export const DEFAULT_RPC_RACE_MAX_INFLIGHT = "chainstack-primary=4,ankr-bsc=32";
 
 function parseMaxInFlightCsv(raw) {
   const limits = new Map();

@@ -99,7 +99,7 @@ npm run share:launch -- --first-block --first-block-tier acceptable --first-bloc
 
 - `--fast-launch`：hook 轮询和买入 quote 探测并行。
 - `--rpc-race`：热读路径用 Chainstack + Ankr 标准 BSC RPC 同时读 hook、quote、gas simulation 和 gas price，先返回可用结果者胜出；`--fast-launch` 默认会打开，可用 `--no-rpc-race` 关闭。公开 RPC 不进入热读 race。
-- `--rpc-race-max-inflight chainstack-primary=4,ankr-bsc=32`：给热读 race 增加每个 provider 的并发上限。默认会把 `chainstack-primary` 限在 `4`，避免云端高并发把它打进 quota 失败档。
+- `--rpc-race-max-inflight chainstack-primary=4,ankr-bsc=32`：给热读 race 增加每个 provider 的并发上限。默认会把 `chainstack-primary` 限在 `4`、`ankr-bsc` 限在 `32`，避免云端高并发把 provider 打进 quota 或尾延迟失败档。
 - `--quote-probe-lead-ms 10000`：开盘前最后 10 秒开始直接探测 quote，quote 成功且价格匹配就进入买入路径，不只等 hook poll。
 - `--sprint-poll-ms 50`：最后 10 秒高频探测。
 - `--gas-price-multiplier-bps 20000`：买入 gas price 使用 2x；普通模式仍默认 1.2x。
