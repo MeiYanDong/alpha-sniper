@@ -34,6 +34,7 @@ bash aws-cloudshell-deploy.sh
 - 创建 EC2 IAM role / instance profile。
 - 给实例授权读取 `/alpha-sniper/env/*` 下的 SSM Parameter Store 参数。
 - 创建一个无入站端口的 security group，实例只通过 SSM 管理。
+- IAM role、instance profile 和 security group 默认带 region 后缀，避免平行部署其它区域时互相覆盖权限。
 - 按实例架构创建对应的 Amazon Linux 2023 EC2。
 - 把 runtime secrets 写入 SSM SecureString：
   - `PRIVATE_KEY`
@@ -103,6 +104,13 @@ bash aws-cloudshell-deploy.sh
 ```
 
 如果不设置 `INSTANCE_TYPE`，脚本会自动从 `INSTANCE_TYPE_CANDIDATES` 中挑一个 AWS 标记为 Free Tier eligible 的实例。只有账户明确允许非 Free Tier EC2 时，才建议手动指定其它实例类型。
+
+平行测试其它区域时，只改 `AWS_REGION`：
+
+```bash
+AWS_REGION=us-west-2 bash scripts/aws-cloudshell-deploy.sh
+AWS_REGION=us-west-2 scripts/aws-ssm-run.sh status
+```
 
 当前 burner BNB 余额不足以覆盖 `300000 gas * 5 gwei`，默认使用 `4.5 gwei`。补足 BNB 后可把 `DRY_RUN_GAS_GWEI` 提高。
 

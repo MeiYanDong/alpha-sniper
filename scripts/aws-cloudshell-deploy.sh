@@ -3,14 +3,15 @@ set -euo pipefail
 
 APP_NAME="${APP_NAME:-alpha-sniper}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-southeast-1}}"
+REGION_SUFFIX="${REGION//[^[:alnum:]]/-}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-}"
 INSTANCE_TYPE_CANDIDATES="${INSTANCE_TYPE_CANDIDATES:-t3.micro t2.micro}"
 REPO_URL="${REPO_URL:-https://github.com/MeiYanDong/alpha-sniper.git}"
 BRANCH="${BRANCH:-main}"
 PARAM_PREFIX="${PARAM_PREFIX:-/alpha-sniper/env}"
-ROLE_NAME="${ROLE_NAME:-alpha-sniper-ec2-role}"
-PROFILE_NAME="${PROFILE_NAME:-alpha-sniper-ec2-profile}"
-SG_NAME="${SG_NAME:-alpha-sniper-ssm-only}"
+ROLE_NAME="${ROLE_NAME:-${APP_NAME}-${REGION_SUFFIX}-ec2-role}"
+PROFILE_NAME="${PROFILE_NAME:-${APP_NAME}-${REGION_SUFFIX}-ec2-profile}"
+SG_NAME="${SG_NAME:-${APP_NAME}-${REGION_SUFFIX}-ssm-only}"
 DRY_RUN_GAS_GWEI="${DRY_RUN_GAS_GWEI:-4.5}"
 
 require_cmd() {
