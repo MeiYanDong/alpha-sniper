@@ -1,0 +1,163 @@
+{
+  "name": "Zest Protocol ZEST",
+  "chainId": 56,
+  "defaultRpcUrl": "https://bsc-dataseed.binance.org",
+  "rpcUrlEnv": "BSC_RPC_URL",
+  "targetToken": "0x5506599c722389a60580b5213ea1da60d64754a1",
+  "quoteToken": "0x55d398326f99059fF775485246999027B3197955",
+  "quoteSymbol": "USDT",
+  "launchTime": "2026-05-19T21:00:00+08:00",
+  "rules": {
+    "idealMaxPriceUsd": "0.0205",
+    "maxBuyPriceUsd": "0.026",
+    "cautionPriceUsd": "0.035",
+    "noChasePriceUsd": "0.054",
+    "maxSpendUsdt": "20",
+    "probeSpendUsdt": "20"
+  },
+  "execution": {
+    "mode": "MONITOR_ONLY_UNTIL_POOL_TYPE_CONFIRMED",
+    "maxSpendUsdt": "20",
+    "autoBuyTiers": [
+      {
+        "name": "ideal",
+        "avgPriceLtUsd": "0.0205",
+        "amountInUsdt": "20"
+      },
+      {
+        "name": "acceptable",
+        "avgPriceGteUsd": "0.0205",
+        "avgPriceLteUsd": "0.026",
+        "amountInUsdt": "10"
+      }
+    ],
+    "maxSlippageBps": 500,
+    "manualReviewDisabled": true
+  },
+  "exit": {
+    "mode": "WAIT_FOR_CONFIRMED_POOL_ROUTE",
+    "defaultSellBps": 10000,
+    "maxSlippageBps": 500,
+    "stopLossFromEntryPct": "15",
+    "takeProfitTiers": [
+      {
+        "name": "first_profit",
+        "gainFromEntryPctGte": "50",
+        "sellBps": 5000
+      },
+      {
+        "name": "full_exit",
+        "gainFromEntryPctGte": "100",
+        "sellBps": 10000
+      }
+    ]
+  },
+  "quoteProbeAmountsUsdt": ["20", "1000", "10000", "100000", "600000"],
+  "addresses": {
+    "pancakeV2Factory": "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73",
+    "pancakeV2Router": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+    "pancakeV3Factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+    "pancakeV3SwapRouter": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
+    "pancakeSmartRouter": "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4",
+    "infinityVault": "0x238a358808379702088667322f80aC48bAd5e6c4",
+    "infinityCLPoolManager": "0xa0FfB9c1CE1Fe56963B0321B32E7A0302114058b",
+    "infinityBinPoolManager": "0xC697d2898e0D09264376196696c51D7aBbbAA4a9",
+    "infinityCLQuoter": "0xd0737C9762912dD34c3271197E362Aa736Df0926",
+    "infinityUniversalRouter": "0xd9c500dff816a1da21a48a732d3498bf09dc9aeb",
+    "permit2": "0x31c2F6fcFf4F8759b3Bd5Bf0e1084A055615c768"
+  },
+  "protocols": {
+    "v2": true,
+    "v3FeeTiers": [100, 500, 2500, 10000],
+    "infinityCL": {
+      "enabled": false,
+      "poolId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expectedHook": "0x0000000000000000000000000000000000000000",
+      "fromBlock": 99000000,
+      "scanInitializeLogs": false
+    }
+  },
+  "watch": {
+    "fromBlock": 82083470,
+    "recentBlocks": 20000,
+    "logChunkSize": 5000,
+    "addresses": [
+      {
+        "label": "deployer",
+        "address": "0x3A6dC528316BbAA2d72a7cb846C80aEd995Ef390",
+        "note": "token deployer; minted 1B ZEST then transferred out"
+      },
+      {
+        "label": "team_unlock",
+        "address": "0x1De143f252Dda0A6De2Df7DEb659f12209DE0005",
+        "note": "project allocation/multisig candidate from public watchlist"
+      },
+      {
+        "label": "community_unlock",
+        "address": "0x6c0ee87e32eab69b14d5be07b44aed8efb4a60a0",
+        "note": "project allocation/multisig candidate from public watchlist"
+      },
+      {
+        "label": "investor_unlock",
+        "address": "0x49b6c390c22f81e32f6289e9489803ca1d172329",
+        "note": "project allocation/multisig candidate from public watchlist"
+      },
+      {
+        "label": "ecosystem",
+        "address": "0x010d972dffee2394ca65681935ea6c7a6b9ea06f",
+        "note": "project allocation/multisig candidate; observed 76.5M ZEST balance"
+      },
+      {
+        "label": "kucoin_hot_wallet_2",
+        "address": "0x53f78A071d04224B8e254E243fFfc6D9f2f3Fa23",
+        "note": "observed 1.5M ZEST inbound; public label seen as KuCoin hot wallet 2"
+      },
+      {
+        "label": "cex_test_a",
+        "address": "0x28ff179e1017Ce8E675617dA8fcdF8d8804C8C9d",
+        "note": "observed 0.997 ZEST test transfer pair"
+      },
+      {
+        "label": "cex_test_b",
+        "address": "0xD85bd3D6Fe9C628BDEeF4d5ADE6d7757FCa190DA",
+        "note": "observed 0.997 ZEST test transfer pair"
+      },
+      {
+        "label": "cex_distribution",
+        "address": "0x17a069f6E16D8155568594e9539B0d8136c8a4Ae",
+        "note": "observed sender for KuCoin 1.5M ZEST transfer"
+      },
+      {
+        "label": "approval_owner_1",
+        "address": "0xeE8Ed4C82BCA82c564B628b86417DB07f619BC2E",
+        "note": "recent max approval owner; spender identity requires live verification"
+      },
+      {
+        "label": "approval_owner_2",
+        "address": "0x3c15fC1A7cB921459508F139AE0aE963B883c6C4",
+        "note": "recent max approval owner; spender identity requires live verification"
+      },
+      {
+        "label": "approval_owner_3",
+        "address": "0xECEF4d9CB259Ed788A44eBA4a7a277D186FE4147",
+        "note": "recent 1B approval owner; spender identity requires live verification"
+      },
+      {
+        "label": "approval_spender_1",
+        "address": "0x99660AE08BCE6f8Ff8599bd806A9f7362f636589",
+        "note": "recent approval spender"
+      },
+      {
+        "label": "approval_spender_2",
+        "address": "0xEC6c4080b746DEF722F02f70dA4ccdee59Bc5d91",
+        "note": "recent approval spender"
+      },
+      {
+        "label": "approval_spender_3",
+        "address": "0xF9C6e3Ef4571565654AB214B9911FBff47c0dcf1",
+        "note": "recent approval spender"
+      }
+    ]
+  },
+  "readwiseBenchmarks": []
+}

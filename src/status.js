@@ -213,7 +213,7 @@ async function main() {
   }
 
   printInfinity(infinity, config, targetMeta);
-  if (infinity.error) console.error(`Infinity error: ${infinity.error.message}`);
+  if (infinity?.error) console.error(`Infinity error: ${infinity.error.message}`);
 
   const livePrices = [
     v2?.price,
